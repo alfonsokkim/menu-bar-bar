@@ -1,5 +1,7 @@
 # Menu Bar Bar
 
+<img src="Assets/logo.svg" alt="Menu Bar Bar's curved shelf silhouette" width="128" height="128">
+
 A menu bar inside your menu bar. Tuck less-used Mac utilities behind a chevron and open them from a small shelf that blends into the bar above it.
 
 ![Menu Bar Bar open on macOS](docs/screenshots/bundle.png)

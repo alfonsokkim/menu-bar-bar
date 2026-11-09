@@ -161,11 +161,11 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 14) {
-                Image(systemName: "tray.fill")
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(.blue)
+                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                    .resizable()
+                    .interpolation(.high)
                     .frame(width: 56, height: 56)
-                    .background(.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityLabel("Menu Bar Bar")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("A little room for your menu bar.").font(.system(size: 19, weight: .semibold))
                     Text("Keep your utilities together, one click away.")
