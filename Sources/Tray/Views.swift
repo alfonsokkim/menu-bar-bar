@@ -109,7 +109,10 @@ struct ShelfView: View {
         .opacity(Double(min(1, max(0, reveal))))
         .background {
             if let image = controller.menuBarSurface {
-                ScreenAlignedMenuSurface(image: image, sampleFrame: controller.menuBarSurfaceFrame)
+                ScreenAlignedMenuSurface(image: image, sampleFrame: controller.menuBarSurfaceFrame,
+                                         barWindowID: controller.menuBarWindowID, reveal: reveal,
+                                         originX: controller.shelfOriginX, rowHeight: controller.rowHeight,
+                                         reduceMotion: reduceMotion)
                     .accessibilityHidden(true)
             } else {
                 MenuMaterial()

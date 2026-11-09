@@ -50,6 +50,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private var surfaceTimer: Timer?
     private var surfaceTask: Task<Void, Never>?
     private var surfaceSample: (background: MenuBarBackdrop.Background, frame: CGRect, scale: CGFloat)?
+    var menuBarWindowID: CGWindowID? { surfaceSample?.background.windowID }
     private var outsideMonitor: Any?
     private var keyMonitor: Any?
     var itemFrames: [UInt32: CGRect] = [:]
@@ -847,6 +848,18 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
 }
 
 final class ShelfPanel: NSPanel {
+    let materialBridge = MenuMaterialBridge()
+
+    override func orderOut(_ sender: Any?) {
+        materialBridge.orderOut(sender)
+        super.orderOut(sender)
+    }
+
+    override func close() {
+        materialBridge.close()
+        super.close()
+    }
+
     override var canBecomeKey: Bool { true }
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

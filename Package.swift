@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "TrayCore"),
         .executableTarget(name: "Tray", dependencies: ["TrayCore"], swiftSettings: [.defaultIsolation(MainActor.self)]),
-        .testTarget(name: "TrayCoreTests", dependencies: ["TrayCore"])
+        .testTarget(name: "TrayCoreTests", dependencies: ["TrayCore"]),
+        .testTarget(name: "TrayRenderingTests", dependencies: ["Tray"])
     ]
 )
