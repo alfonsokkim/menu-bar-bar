@@ -71,7 +71,7 @@ func joinMeetsMenuBarWithoutOverlap(scale: CGFloat) {
     #expect(abs(late.midX - rect.midX) < abs(early.midX - rect.midX))
 }
 
-@Test(arguments: [CGFloat(1), CGFloat(2)])
+@Test(arguments: [CGFloat(1), CGFloat(2), CGFloat(3)])
 func backgroundSampleExcludesTheMenuBarSeparator(scale: CGFloat) {
     let bar = CGRect(x: -1920, y: -1200, width: 1920, height: 30)
     let shelf = CGRect(x: -300, y: -1170, width: 82, height: 30)
@@ -81,8 +81,18 @@ func backgroundSampleExcludesTheMenuBarSeparator(scale: CGFloat) {
     #expect(!sample.intersects(CGRect(x: bar.minX, y: bar.maxY - 1, width: bar.width, height: 1)))
     #expect(sample.minX == shelf.minX)
     #expect(sample.width == shelf.width)
-    #expect(sample.height * scale == 1)
+    // Quartz rejects a sub-point-high capture even with bestResolution.
+    #expect(sample.height == 1)
+    #expect(sample.maxY - 1 / scale == bar.maxY - 2 - 1 / scale)
     #expect(sample.minY * scale == (sample.minY * scale).rounded())
+}
+
+@Test func retinaMenuBarSampleHasACapturableHeight() {
+    let bar = CGRect(x: 0, y: 0, width: 1800, height: 39)
+    let shelf = CGRect(x: 1267, y: 39, width: 266, height: 39)
+    let sample = ShelfSurface.backgroundSample(barFrame: bar, shelfFrame: shelf, scale: 2)
+    #expect(sample == CGRect(x: 1267, y: 36, width: 266, height: 1))
+    #expect(sample.maxY - 0.5 == 36.5)
 }
 
 @Test(arguments: [CGFloat(1), CGFloat(2)])

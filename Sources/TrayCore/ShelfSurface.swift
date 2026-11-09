@@ -8,11 +8,12 @@ public enum ShelfSurface {
         max(1, itemWidth)
     }
 
-    /// Read the menu material above its bottom separator. Use one physical
-    /// pixel, leaving two points clear of border and antialiasing treatment.
+    /// Capture a full point above the separator. The window capture API
+    /// rejects sub-point heights on Retina displays; the caller keeps only
+    /// the bottom physical pixel row, two points clear of the border.
     public static func backgroundSample(barFrame: CGRect, shelfFrame: CGRect, scale: CGFloat) -> CGRect {
         let scale = max(1, scale)
-        let height = 1 / scale
+        let height: CGFloat = 1
         let y = ((barFrame.maxY - 2) * scale).rounded(.down) / scale - height
         return CGRect(x: shelfFrame.minX, y: y, width: shelfFrame.width, height: height)
     }
