@@ -161,7 +161,7 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 14) {
-                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                Image(nsImage: NSImage(named: "MenuBarBar") ?? NSImage())
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 56, height: 56)

@@ -1,4 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Menu Bar Bar">
   <rect x="64" y="64" width="896" height="896" rx="200" fill="#191919"/>
-  <path transform="translate(144 394.24) scale(7.36)" d="M0.0 0.0 L100.0 0.0 C84.6 0.0 78.0 5.6 78.0 16.0 L78.0 17.0 Q78.0 32.0 63.0 32.0 L37.0 32.0 Q22.0 32.0 22.0 17.0 L22.0 16.0 C22.0 5.6 15.399999999999999 0.0 0.0 0.0 Z" fill="#ffffff"/>
+  <path d="M160 320 H864 Q880 320 880 336 V464 H144 V336 Q144 320 160 320 Z" fill="#ffffff"/>
+  <path d="M470 374 L512 414 L554 374" fill="none" stroke="#191919" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <path transform="translate(144 464) scale(7.36)" d="M0.0 0.0 L100.0 0.0 C84.6 0.0 78.0 5.6 78.0 16.0 L78.0 17.0 Q78.0 32.0 63.0 32.0 L37.0 32.0 Q22.0 32.0 22.0 17.0 L22.0 16.0 C22.0 5.6 15.399999999999999 0.0 0.0 0.0 Z" fill="#ffffff"/>
+  <g transform="translate(512 572) rotate(8)">
+    <circle r="52" fill="#191919"/>
+    <path d="M-52 0 H52" stroke="#ffffff" stroke-width="13"/>
+  </g>
 </svg>
