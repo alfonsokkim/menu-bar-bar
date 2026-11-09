@@ -81,8 +81,8 @@ func backgroundSampleExcludesTheMenuBarSeparator(scale: CGFloat) {
     #expect(!sample.intersects(CGRect(x: bar.minX, y: bar.maxY - 1, width: bar.width, height: 1)))
     #expect(sample.minX == shelf.minX)
     #expect(sample.width == shelf.width)
-    // Quartz rejects a sub-point-high capture even with bestResolution.
-    #expect(sample.height == 1)
+    #expect(sample.minY == bar.minY + 2)
+    #expect(sample.height == bar.height - 4)
     #expect(sample.maxY - 1 / scale == bar.maxY - 2 - 1 / scale)
     #expect(sample.minY * scale == (sample.minY * scale).rounded())
 }
@@ -91,7 +91,7 @@ func backgroundSampleExcludesTheMenuBarSeparator(scale: CGFloat) {
     let bar = CGRect(x: 0, y: 0, width: 1800, height: 39)
     let shelf = CGRect(x: 1267, y: 39, width: 266, height: 39)
     let sample = ShelfSurface.backgroundSample(barFrame: bar, shelfFrame: shelf, scale: 2)
-    #expect(sample == CGRect(x: 1267, y: 36, width: 266, height: 1))
+    #expect(sample == CGRect(x: 1267, y: 2, width: 266, height: 35))
     #expect(sample.maxY - 0.5 == 36.5)
 }
 

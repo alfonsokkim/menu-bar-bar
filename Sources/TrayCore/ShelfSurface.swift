@@ -8,14 +8,13 @@ public enum ShelfSurface {
         max(1, itemWidth)
     }
 
-    /// Capture a full point above the separator. The window capture API
-    /// rejects sub-point heights on Retina displays; the caller keeps only
-    /// the bottom physical pixel row, two points clear of the border.
+    /// Keep the menu material's vertical shading and texture, excluding the
+    /// outer highlight and separator. The view reflects it below the join.
     public static func backgroundSample(barFrame: CGRect, shelfFrame: CGRect, scale: CGFloat) -> CGRect {
         let scale = max(1, scale)
-        let height: CGFloat = 1
-        let y = ((barFrame.maxY - 2) * scale).rounded(.down) / scale - height
-        return CGRect(x: shelfFrame.minX, y: y, width: shelfFrame.width, height: height)
+        let top = ((barFrame.minY + 2) * scale).rounded(.up) / scale
+        let bottom = ((barFrame.maxY - 2) * scale).rounded(.down) / scale
+        return CGRect(x: shelfFrame.minX, y: top, width: shelfFrame.width, height: max(1, bottom - top))
     }
 
     /// Coordinates have their origin at the top left, like a SwiftUI Shape.

@@ -47,22 +47,20 @@ final class MenuBarBackdrop {
     @concurrent static func refreshedImage(for background: Background, shelfFrame: CGRect, scale: CGFloat) async -> CGImage? {
         let sample = ShelfSurface.backgroundSample(barFrame: background.barFrame, shelfFrame: shelfFrame, scale: scale)
         guard !Task.isCancelled else { return nil }
-        return captureRow(sample, windowID: background.windowID)
+        return captureMaterial(sample, windowID: background.windowID)
     }
 
-    nonisolated private static func captureRow(_ sample: CGRect, windowID: CGWindowID) -> CGImage? {
+    nonisolated private static func captureMaterial(_ sample: CGRect, windowID: CGWindowID) -> CGImage? {
         guard let image = capture?(sample,
                 CGWindowListOption.optionOnScreenBelowWindow.union(.optionIncludingWindow).rawValue,
                 windowID, CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
               image.width > 0, image.height > 0 else { return nil }
-        // Keep the same physical row at every scale, without blending the
-        // extra Retina rows that were needed for a valid capture request.
-        return image.cropping(to: CGRect(x: 0, y: image.height - 1, width: image.width, height: 1))
+        return image
     }
 
     func image(for background: Background, shelfFrame: CGRect, scale: CGFloat) -> NSImage? {
-        // Keep the horizontal variation of the menu material. Neither the
-        // bottom separator nor higher-level windows belong in the sample.
+        // Preserve the material in both dimensions. Neither the outer
+        // borders nor higher-level windows belong in the sample.
         let sample = ShelfSurface.backgroundSample(barFrame: background.barFrame, shelfFrame: shelfFrame, scale: scale)
         let key = "\(background.windowID)-\(sample)-\(scale)"
         let now = ProcessInfo.processInfo.systemUptime
@@ -71,11 +69,11 @@ final class MenuBarBackdrop {
         capturedAt = now
         // Excluding everything above the actual menu-bar window prevents the
         // shelf, status highlights, and other overlays from tinting the sample.
-        guard let cgImage = Self.captureRow(sample, windowID: background.windowID) else {
+        guard let cgImage = Self.captureMaterial(sample, windowID: background.windowID) else {
             cachedImage = nil
             return nil
         }
-        cachedImage = NSImage(cgImage: cgImage, size: CGSize(width: sample.width, height: 1 / max(1, scale)))
+        cachedImage = NSImage(cgImage: cgImage, size: CGSize(width: sample.width, height: sample.height))
         return cachedImage
     }
 }

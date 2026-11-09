@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Keep each sampled menu-bar pixel above the same desktop coordinate while
-/// the shelf changes width. Only crop the strip; never stretch it horizontally.
+/// Keep the menu material aligned horizontally while the shelf changes width.
+/// Reflect its vertical shading below the join instead of stretching one row.
 struct ScreenAlignedMenuSurface: NSViewRepresentable {
     let image: NSImage
     let sampleFrame: CGRect
@@ -36,9 +36,17 @@ final class MenuSurfaceView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let image, let window else { return }
         let screenFrame = window.convertToScreen(convert(bounds, to: nil))
-        NSGraphicsContext.current?.imageInterpolation = .none
-        image.draw(in: CGRect(x: sampleFrame.minX - screenFrame.minX, y: bounds.minY,
-                              width: sampleFrame.width, height: bounds.height),
-                   from: .zero, operation: .copy, fraction: 1)
+        guard let context = NSGraphicsContext.current?.cgContext,
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.interpolationQuality = .low
+        context.setBlendMode(.copy)
+        // AppKit's origin is at the bottom. Reflect the captured material so
+        // its bottom edge meets the native bar and its texture stays varied.
+        context.translateBy(x: 0, y: bounds.minY + bounds.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(cgImage, in: CGRect(x: sampleFrame.minX - screenFrame.minX, y: bounds.minY,
+                                         width: sampleFrame.width, height: bounds.height))
     }
 }

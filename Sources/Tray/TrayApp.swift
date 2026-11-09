@@ -285,7 +285,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         let targetChanged = shelfFrameTarget != panelFrame
         let shouldAnimate = animateResize && shelfPresented && shelf.isVisible &&
             !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && chevronTask == nil
-        // Cover the whole resize path. The view crops this strip in screen
+        // Cover the whole resize path. The view crops the material in screen
         // coordinates instead of stretching the final sample during the tween.
         let sampleFrame: CGRect
         if targetChanged && shouldAnimate {
@@ -349,7 +349,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                   let image, image.width > 0, image.height > 0 else { return }
             self.menuBarSurfaceFrame = sample.frame
             self.menuBarSurface = NSImage(cgImage: image,
-                                         size: CGSize(width: sample.frame.width, height: 1 / max(1, sample.scale)))
+                                         size: CGSize(width: sample.frame.width, height: CGFloat(image.height) / max(1, sample.scale)))
         }
     }
 
