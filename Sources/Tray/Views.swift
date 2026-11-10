@@ -6,7 +6,6 @@ import TrayCore
 struct FlaredShelf: Shape {
     var progress: CGFloat
     var originX: CGFloat
-    var joinHeight: CGFloat
 
     nonisolated var animatableData: CGFloat {
         get { progress }
@@ -14,11 +13,11 @@ struct FlaredShelf: Shape {
     }
 
     nonisolated func path(in rect: CGRect) -> Path {
-        Path(ShelfSurface.liquidPath(in: rect, progress: progress, originX: originX, joinHeight: joinHeight))
+        Path(ShelfSurface.liquidPath(in: rect, progress: progress, originX: originX))
     }
 }
 
-/// Native glyph colours suit the menu bar, but the clear shelf may cover any app.
+/// Keep native glyphs legible over light and dark areas of the wallpaper.
 struct StatusIconContrast: ViewModifier {
     func body(content: Content) -> some View {
         content.compositingGroup()
@@ -58,7 +57,7 @@ struct ShelfView: View {
                                     if let image = item.image {
                                         Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
                                     } else {
-                                        Image(systemName: "app.dashed").resizable().scaledToFit().padding(5)
+                                        Image(systemName: "ellipsis").font(.system(size: 12))
                                     }
                                 }
                                 .frame(width: item.isLiveImage ? item.frame.width : 18, height: item.isLiveImage ? controller.rowHeight : 18)
@@ -77,7 +76,7 @@ struct ShelfView: View {
                                         value: [item.id: geometry.frame(in: .named("Shelf"))])
                                 }
                             }
-                            .help(item.name + (item.isLiveImage ? "" : " (app icon preview; native icon is temporarily unavailable)"))
+                            .help(item.name + (item.isLiveImage ? "" : " (waiting for the native menu bar icon)"))
                             .accessibilityLabel(item.name)
                             .accessibilityIdentifier("menu-item-\(item.id)")
                             .contextMenu {
@@ -97,21 +96,24 @@ struct ShelfView: View {
         }
         .frame(height: controller.rowHeight)
         .padding(.horizontal, ShelfSurface.flare)
-        .padding(.top, controller.shelfJoinHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(Double(min(1, max(0, reveal))))
+        .background {
+            WallpaperSurface(snapshot: controller.wallpaper)
+                .accessibilityHidden(true)
+        }
         .overlay(alignment: .topLeading) {
             if let x = controller.shelfDropIndicatorX {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(.primary.opacity(0.8))
                     .frame(width: 2, height: max(1, controller.rowHeight - 10))
-                    .offset(x: x - 1, y: controller.shelfJoinHeight + 5)
+                    .offset(x: x - 1, y: 5)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
-        .clipShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX, joinHeight: controller.shelfJoinHeight))
-        .contentShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX, joinHeight: controller.shelfJoinHeight))
+        .clipShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX))
+        .contentShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX))
         .opacity(reduceMotion ? Double(min(1, max(0, reveal))) : 1)
         .allowsHitTesting(controller.shelfPresented)
         .coordinateSpace(name: "Shelf")
@@ -191,7 +193,7 @@ struct SetupView: View {
             }
 
             VStack(spacing: 13) {
-                permissionRow("Screen Recording", detail: "Show the real menu bar icons. Captures stay on this Mac.", granted: controller.screenAccess) {
+                permissionRow("Screen Recording", detail: "Show real menu bar icons and the wallpaper behind the shelf. Captures stay on this Mac.", granted: controller.screenAccess) {
                     MenuItems.requestScreenAccess()
                 }
                 Divider()

@@ -13,14 +13,14 @@ struct StatusIconCache {
         entries = entries.filter { windows.contains($0.key) }
     }
 
-    mutating func resolve(id: CGWindowID, sourcePID: pid_t, capture: CGImage?,
-                          size: CGSize, fallback: NSImage?) -> (image: NSImage?, isLiveImage: Bool) {
+    mutating func resolve(id: CGWindowID, sourcePID: pid_t, captures: [CGImage],
+                          size: CGSize) -> (image: NSImage?, isLiveImage: Bool) {
         if entries[id]?.sourcePID != sourcePID { entries[id] = nil }
-        if let capture, Self.hasVisiblePixels(capture) {
+        if let capture = captures.first(where: Self.hasVisiblePixels) {
             entries[id] = Entry(sourcePID: sourcePID, image: NSImage(cgImage: capture, size: size))
         }
         if let entry = entries[id] { return (entry.image, true) }
-        return (fallback, false)
+        return (nil, false)
     }
 
     static func hasVisiblePixels(_ image: CGImage) -> Bool {

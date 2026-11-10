@@ -9,8 +9,8 @@ struct MenuItem: Identifiable {
     let sourcePID: pid_t
     let name: String
     let frame: CGRect
-    let image: NSImage?
-    let isLiveImage: Bool
+    var image: NSImage?
+    var isLiveImage: Bool
     var orderKey: String = ""
 }
 
@@ -145,7 +145,8 @@ enum MenuItems {
             usedKeys.insert(key)
             orderKeys[id] = key
         }
-        return infos.compactMap { info -> MenuItem? in
+        var captures: [CGWindowID: CGImage] = [:]
+        let items = infos.compactMap { info -> MenuItem? in
             guard let layer = info[kCGWindowLayer as String] as? Int, layer == Int(kCGStatusWindowLevel),
                   let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   pid != ProcessInfo.processInfo.processIdentifier,
@@ -172,18 +173,41 @@ enum MenuItems {
             let title = info[kCGWindowName as String] as? String ?? ""
             guard title != "Tray.Divider", title != "Tray.Trigger" else { return nil }
             let label = source?.name ?? (app?.bundleIdentifier == "com.apple.controlcenter" && !title.isEmpty ? title : name)
-            var capturedImage: CGImage?
             if captureImages {
                 var windowPointer = UnsafeRawPointer(bitPattern: UInt(id))
                 if let array = CFArrayCreate(kCFAllocatorDefault, &windowPointer, 1, nil),
                    let cgImage = capture?(.null, array, CGWindowImageOption.boundsIgnoreFraming.rawValue)?.takeRetainedValue() {
-                    capturedImage = cgImage
+                    captures[id] = cgImage
                 }
             }
-            let icon = iconCache.resolve(id: id, sourcePID: sourcePID, capture: capturedImage,
-                                         size: frame.size, fallback: app?.icon)
-            return MenuItem(id: id, pid: pid, sourcePID: sourcePID, name: label, frame: frame, image: icon.image, isLiveImage: icon.isLiveImage, orderKey: orderKeys[id] ?? "session:\(id)")
+            return MenuItem(id: id, pid: pid, sourcePID: sourcePID, name: label, frame: frame, image: nil, isLiveImage: false, orderKey: orderKeys[id] ?? "session:\(id)")
         }.sorted { $0.frame.minX < $1.frame.minX }
+        // Resolve the whole mirror group before consulting the cache, so any
+        // fresh native capture wins and is stored under the stable identity.
+        return deduplicated(items).map { canonical in
+            let fresh = items.filter { $0.sourcePID == canonical.sourcePID && $0.frame == canonical.frame }
+                .sorted { $0.id < $1.id }.compactMap { captures[$0.id] }
+            let icon = iconCache.resolve(id: canonical.id, sourcePID: canonical.sourcePID,
+                                         captures: fresh, size: canonical.frame.size)
+            var item = canonical
+            item.image = icon.image
+            item.isLiveImage = icon.isLiveImage
+            return item
+        }
+    }
+
+    /// Tahoe can expose both a native status window and its hosted mirror at
+    /// the same AX location. Keep one stable identity for each source slot.
+    static func deduplicated(_ items: [MenuItem]) -> [MenuItem] {
+        var result: [MenuItem] = []
+        for item in items {
+            if let index = result.firstIndex(where: { $0.sourcePID == item.sourcePID && $0.frame == item.frame }) {
+                if item.id < result[index].id { result[index] = item }
+            } else {
+                result.append(item)
+            }
+        }
+        return result
     }
 
     static func requestScreenAccess() {

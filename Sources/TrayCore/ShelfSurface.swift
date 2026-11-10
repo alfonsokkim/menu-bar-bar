@@ -36,7 +36,7 @@ public enum ShelfSurface {
     }
 
     /// Grow a neck beneath the trigger, then let its rounded body spread into
-    /// the shelf. The mask reveals the icons over a transparent background.
+    /// the shelf. The mask reveals the icons over the aligned wallpaper.
     public static func liquidPath(in bounds: CGRect, progress: CGFloat, originX: CGFloat, joinHeight: CGFloat = 0) -> CGPath {
         guard progress > 0 else { return CGMutablePath() }
         let join = min(max(0, joinHeight), bounds.height)
@@ -75,13 +75,6 @@ public enum ShelfSurface {
         p.closeSubpath()
         var transform = CGAffineTransform(translationX: rect.minX, y: rect.minY)
         return p.copy(using: &transform) ?? p
-    }
-
-    /// Extend only the panel's top over the native separator. The body and
-    /// icons retain their original bounds below the menu bar.
-    public static func panelFrame(bodyFrame: CGRect, scale: CGFloat) -> CGRect {
-        CGRect(x: bodyFrame.minX, y: bodyFrame.minY, width: bodyFrame.width,
-               height: bodyFrame.height + 1 / max(1, scale))
     }
 
     /// Meet the menu bar edge to edge on a physical pixel boundary.

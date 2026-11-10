@@ -24,10 +24,10 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var screenAccess = false
     @Published var accessibilityAccess = false
     @Published var message = ""
+    @Published var wallpaper: WallpaperSnapshot?
     @Published var rowHeight: CGFloat = NSStatusBar.system.thickness
     @Published var shelfPresented = false
     @Published var shelfOriginX: CGFloat = 0
-    @Published var shelfJoinHeight: CGFloat = 1
     private(set) var shelfPresentationRevision = 0
     private(set) var animatesShelf = true
     @Published var chevronPhase: CGFloat = 0
@@ -270,8 +270,9 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         triggerFrame = anchor
         let frame = ShelfSurface.frame(anchor: anchor, screen: screen.frame, menuBarBottom: menuBarBottom,
                                        bodyWidth: width, height: rowHeight, scale: screen.backingScaleFactor)
-        shelfJoinHeight = 1 / max(1, screen.backingScaleFactor)
-        let panelFrame = ShelfSurface.panelFrame(bodyFrame: frame, scale: screen.backingScaleFactor)
+        // Use the exact body frame. Fractional overlap gets rounded by AppKit
+        // and can expose a bright row above the wallpaper.
+        let panelFrame = frame
         let targetChanged = shelfFrameTarget != panelFrame
         let shouldAnimate = animateResize && shelfPresented && shelf.isVisible &&
             !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && chevronTask == nil
@@ -288,6 +289,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
         shelfOriginX = anchor.midX - frame.minX
+        wallpaper = screenAccess ? WallpaperBackdrop.snapshot(for: panelFrame, screen: screen) : nil
     }
 
     func hideShelf(animated: Bool = true) {
@@ -474,7 +476,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private func shelfReorderSlot(_ id: UInt32, at point: CGPoint) -> ShelfReorderSlot? {
         guard shelfPresented, let panel, panel.isVisible else { return nil }
         let local = CGPoint(x: point.x - panel.frame.minX, y: panel.frame.maxY - point.y)
-        let viewport = CGRect(x: ShelfSurface.flare, y: shelfJoinHeight,
+        let viewport = CGRect(x: ShelfSurface.flare, y: 0,
                               width: max(0, panel.frame.width - 2 * ShelfSurface.flare), height: rowHeight)
         let cells = items.compactMap { item in
             itemFrames[item.id].map { ShelfDragCell(id: item.id, frame: $0) }
@@ -665,7 +667,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         activationTask?.cancel()
         let revision = shelfPresentationRevision
         let local = itemFrames[item.id] ?? CGRect(x: panel.frame.width / 2 - rowHeight / 2,
-                                                  y: shelfJoinHeight, width: rowHeight, height: rowHeight)
+                                                  y: 0, width: rowHeight, height: rowHeight)
         let anchor = CGRect(x: panel.frame.minX + local.minX, y: panel.frame.maxY - local.maxY,
                             width: local.width, height: local.height)
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0

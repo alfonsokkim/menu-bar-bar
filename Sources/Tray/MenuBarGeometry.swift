@@ -1,6 +1,6 @@
 import AppKit
 
-/// Reads window bounds only. The shelf never captures or paints a background.
+/// Reads native menu bar bounds independently of the shelf background.
 enum MenuBarGeometry {
     static func frame(for screen: NSScreen) -> CGRect? {
         guard let main = NSScreen.screens.first else { return nil }

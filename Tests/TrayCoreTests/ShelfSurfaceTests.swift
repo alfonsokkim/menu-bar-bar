@@ -72,24 +72,18 @@ func joinMeetsMenuBarWithoutOverlap(scale: CGFloat) {
 }
 
 @Test(arguments: [CGFloat(1), CGFloat(2)])
-func separatorCoverPreservesTheBodyAndFollowsTheReveal(scale: CGFloat) {
-    let body = CGRect(x: -200, y: 1020, width: 82, height: 30)
-    let panel = ShelfSurface.panelFrame(bodyFrame: body, scale: scale)
-    let join = 1 / scale
-    #expect(panel.minY == body.minY)
-    #expect(panel.maxY == body.maxY + join)
-    #expect(panel.width == body.width)
-    let bounds = CGRect(origin: .zero, size: panel.size)
-    let settled = ShelfSurface.liquidPath(in: bounds, progress: 1, originX: 41, joinHeight: join)
-    let original = ShelfSurface.path(in: CGRect(x: 0, y: join, width: body.width, height: body.height))
-    #expect(settled.contains(CGPoint(x: 41, y: join / 2)))
-    for x in stride(from: CGFloat(1), to: 82, by: 2) {
-        for y in stride(from: join + 0.25, to: panel.height, by: 0.5) {
-            #expect(settled.contains(CGPoint(x: x, y: y)) == original.contains(CGPoint(x: x, y: y)))
-        }
+func shelfUsesExactlyTheNativeBarHeightAndDoesNotCoverItsPixels(scale: CGFloat) {
+    for height: CGFloat in [30, 39] {
+        let bottom: CGFloat = 1169 - height
+        let panel = ShelfSurface.frame(anchor: CGRect(x: 1350, y: bottom, width: 28, height: height),
+                                       screen: CGRect(x: 0, y: 0, width: 1800, height: 1169),
+                                       menuBarBottom: bottom, bodyWidth: 222, height: height, scale: scale)
+        #expect(panel.maxY == bottom)
+        #expect(panel.height == height)
+        #expect(panel.minY * scale == (panel.minY * scale).rounded())
+        #expect(!panel.intersects(CGRect(x: 0, y: bottom, width: 1800, height: height)))
+        let mask = ShelfSurface.liquidPath(in: CGRect(origin: .zero, size: panel.size), progress: 1, originX: 133)
+        #expect(mask.boundingBoxOfPath.minY == 0)
+        #expect(mask.boundingBoxOfPath.height == height)
     }
-    let early = ShelfSurface.liquidPath(in: bounds, progress: 0.1, originX: 41, joinHeight: join)
-    #expect(early.contains(CGPoint(x: 41, y: join / 2)))
-    #expect(!early.contains(CGPoint(x: 5, y: join / 2)))
-    #expect(ShelfSurface.liquidPath(in: bounds, progress: 0, originX: 41, joinHeight: join).isEmpty)
 }
