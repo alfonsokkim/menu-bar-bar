@@ -8,15 +8,6 @@ public enum ShelfSurface {
         max(1, itemWidth)
     }
 
-    /// Keep the menu material's vertical shading and texture, excluding the
-    /// outer highlight and separator. The view reflects it below the join.
-    public static func backgroundSample(barFrame: CGRect, shelfFrame: CGRect, scale: CGFloat) -> CGRect {
-        let scale = max(1, scale)
-        let top = ((barFrame.minY + 2) * scale).rounded(.up) / scale
-        let bottom = ((barFrame.maxY - 2) * scale).rounded(.down) / scale
-        return CGRect(x: shelfFrame.minX, y: top, width: shelfFrame.width, height: max(1, bottom - top))
-    }
-
     /// Coordinates have their origin at the top left, like a SwiftUI Shape.
     /// Horizontal tangents at the top flow out into the menu bar; vertical
     /// tangents at the neck flow into the rounded bottom corners.
@@ -45,7 +36,7 @@ public enum ShelfSurface {
     }
 
     /// Grow a neck beneath the trigger, then let its rounded body spread into
-    /// the shelf. Only the mask moves; the sampled background stays in place.
+    /// the shelf. The mask reveals the icons over a transparent background.
     public static func liquidPath(in bounds: CGRect, progress: CGFloat, originX: CGFloat, joinHeight: CGFloat = 0) -> CGPath {
         guard progress > 0 else { return CGMutablePath() }
         let join = min(max(0, joinHeight), bounds.height)

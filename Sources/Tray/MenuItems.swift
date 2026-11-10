@@ -62,6 +62,7 @@ enum MenuAccessibility {
 }
 
 enum MenuItems {
+    private static var iconCache = StatusIconCache()
     private static var orderKeyCache: [CGWindowID: (bundle: String, title: String, key: String)] = [:]
     // The window capture API remains available at runtime on macOS 26. It can
     // capture offscreen status windows, which ScreenCaptureKit cannot yet do.
@@ -102,6 +103,7 @@ enum MenuItems {
     static func read(divider: CGRect, captureImages: Bool, sources: [SourceItem], knownItems: [MenuItem] = [], requireSource: Bool = true) -> [MenuItem] {
         let infos = windowInfo()
         let liveIDs = Set(infos.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
+        iconCache.retain(windows: liveIDs)
         orderKeyCache = orderKeyCache.filter { liveIDs.contains($0.key) }
         var orderKeys: [CGWindowID: String] = [:]
         // Count same-app extras across the native row, including visible ones,
@@ -170,15 +172,17 @@ enum MenuItems {
             let title = info[kCGWindowName as String] as? String ?? ""
             guard title != "Tray.Divider", title != "Tray.Trigger" else { return nil }
             let label = source?.name ?? (app?.bundleIdentifier == "com.apple.controlcenter" && !title.isEmpty ? title : name)
-            var image: NSImage?
+            var capturedImage: CGImage?
             if captureImages {
                 var windowPointer = UnsafeRawPointer(bitPattern: UInt(id))
                 if let array = CFArrayCreate(kCFAllocatorDefault, &windowPointer, 1, nil),
                    let cgImage = capture?(.null, array, CGWindowImageOption.boundsIgnoreFraming.rawValue)?.takeRetainedValue() {
-                    image = NSImage(cgImage: cgImage, size: frame.size)
+                    capturedImage = cgImage
                 }
             }
-            return MenuItem(id: id, pid: pid, sourcePID: sourcePID, name: label, frame: frame, image: image ?? app?.icon, isLiveImage: image != nil, orderKey: orderKeys[id] ?? "session:\(id)")
+            let icon = iconCache.resolve(id: id, sourcePID: sourcePID, capture: capturedImage,
+                                         size: frame.size, fallback: app?.icon)
+            return MenuItem(id: id, pid: pid, sourcePID: sourcePID, name: label, frame: frame, image: icon.image, isLiveImage: icon.isLiveImage, orderKey: orderKeys[id] ?? "session:\(id)")
         }.sorted { $0.frame.minX < $1.frame.minX }
     }
 

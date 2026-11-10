@@ -3,23 +3,6 @@ import ServiceManagement
 import SwiftUI
 import TrayCore
 
-struct MenuMaterial: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .clear
-            glass.cornerRadius = 0
-            return glass
-        }
-        let view = NSVisualEffectView()
-        view.material = .menu
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-    func updateNSView(_ view: NSView, context: Context) {}
-}
-
 struct FlaredShelf: Shape {
     var progress: CGFloat
     var originX: CGFloat
@@ -32,6 +15,15 @@ struct FlaredShelf: Shape {
 
     nonisolated func path(in rect: CGRect) -> Path {
         Path(ShelfSurface.liquidPath(in: rect, progress: progress, originX: originX, joinHeight: joinHeight))
+    }
+}
+
+/// Native glyph colours suit the menu bar, but the clear shelf may cover any app.
+struct StatusIconContrast: ViewModifier {
+    func body(content: Content) -> some View {
+        content.compositingGroup()
+            .shadow(color: .white.opacity(0.85), radius: 0.65)
+            .shadow(color: .black.opacity(0.65), radius: 0.65)
     }
 }
 
@@ -70,6 +62,7 @@ struct ShelfView: View {
                                     }
                                 }
                                 .frame(width: item.isLiveImage ? item.frame.width : 18, height: item.isLiveImage ? controller.rowHeight : 18)
+                                .modifier(StatusIconContrast())
                                 .frame(width: ShelfSurface.cellWidth(itemWidth: item.frame.width), height: controller.rowHeight)
                                 .contentShape(Rectangle())
                             }
@@ -84,7 +77,7 @@ struct ShelfView: View {
                                         value: [item.id: geometry.frame(in: .named("Shelf"))])
                                 }
                             }
-                            .help(item.name + (item.isLiveImage ? "" : " (app icon preview; enable Screen Recording for the actual icon)"))
+                            .help(item.name + (item.isLiveImage ? "" : " (app icon preview; native icon is temporarily unavailable)"))
                             .accessibilityLabel(item.name)
                             .accessibilityIdentifier("menu-item-\(item.id)")
                             .contextMenu {
@@ -107,17 +100,6 @@ struct ShelfView: View {
         .padding(.top, controller.shelfJoinHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(Double(min(1, max(0, reveal))))
-        .background {
-            if let image = controller.menuBarSurface {
-                ScreenAlignedMenuSurface(image: image, sampleFrame: controller.menuBarSurfaceFrame,
-                                         barWindowID: controller.menuBarWindowID, reveal: reveal,
-                                         originX: controller.shelfOriginX, rowHeight: controller.rowHeight,
-                                         reduceMotion: reduceMotion)
-                    .accessibilityHidden(true)
-            } else {
-                MenuMaterial()
-            }
-        }
         .overlay(alignment: .topLeading) {
             if let x = controller.shelfDropIndicatorX {
                 RoundedRectangle(cornerRadius: 1)
@@ -209,7 +191,7 @@ struct SetupView: View {
             }
 
             VStack(spacing: 13) {
-                permissionRow("Screen Recording", detail: "Match the menu bar background and show its real icons. Captures stay on this Mac.", granted: controller.screenAccess) {
+                permissionRow("Screen Recording", detail: "Show the real menu bar icons. Captures stay on this Mac.", granted: controller.screenAccess) {
                     MenuItems.requestScreenAccess()
                 }
                 Divider()

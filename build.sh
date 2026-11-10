@@ -17,13 +17,13 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>Tray</string>
 <key>CFBundleIconFile</key><string>MenuBarBar</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.1</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.1.2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAccessibilityUsageDescription</key><string>Menu Bar Bar opens the original menu of the menu bar item you click.</string>
-<key>NSScreenCaptureUsageDescription</key><string>Menu Bar Bar displays the real icons you bundle and matches the menu bar background. Images remain on this Mac.</string>
+<key>NSScreenCaptureUsageDescription</key><string>Menu Bar Bar displays the real icons you bundle. Images remain on this Mac.</string>
 </dict></plist>
 PLIST
 # Ad-hoc signing works without an Apple developer account.

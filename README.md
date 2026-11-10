@@ -2,7 +2,7 @@
 
 <img src="Assets/logo.svg" alt="Menu Bar Bar's curved shelf silhouette" width="128" height="128">
 
-A menu bar inside your menu bar. Tuck less-used Mac utilities behind a chevron and open them from a small shelf that blends into the bar above it.
+A menu bar inside your menu bar. Tuck less-used Mac utilities behind a chevron and open them from a transparent shelf below it.
 
 ![Menu Bar Bar open on macOS](docs/screenshots/bundle.png)
 
@@ -56,11 +56,11 @@ Open at login is optional. Right-click the chevron for Settings, arrangement mod
 - Command-drag out onto the menu bar to return an icon. Empty space left of the chevron targets its left side; gaps among icons on the right target that gap.
 - Use **Add an icon…** in Settings or **Move to Menu Bar** in an icon's context menu as alternatives to dragging.
 
-The shelf follows the actual menu bar height and each icon's native spacing. Its flared edges join the bar, and its background samples the material macOS is rendering rather than guessing a wallpaper colour. The chevron drops into the opening and returns when it closes. Reduce Motion uses a short fade instead.
+The shelf follows the actual menu bar height and each icon's native spacing. Its background is fully transparent, with no blur, tint, or copied wallpaper. The chevron drops into the opening and returns when it closes. Reduce Motion uses a short fade instead.
 
 ## Privacy and permissions
 
-Screen Recording supplies the real icon previews and the menu bar background. Images are processed in memory on your Mac, refreshed while the shelf is open, and are not saved or uploaded by the app. macOS may display its screen-capture indicator while this is active.
+Screen Recording supplies the real icon previews. Images are processed in memory on your Mac, refreshed while the shelf is open or icons are being arranged, and are not saved or uploaded by the app. If macOS returns an empty capture, Menu Bar Bar keeps the last visible image or shows the app icon until a new capture is available. macOS may display its screen-capture indicator while this is active.
 
 Accessibility lets Menu Bar Bar invoke the original menus and move native status items. While running, the app monitors mouse events to recognise Command-drags and clicks outside the shelf. Additional mouse event taps are active briefly during native transfers. It does not record typed text. Local macOS diagnostic logs include cursor positions and transfer state for troubleshooting. There are no accounts, analytics, or network services in the app.
 

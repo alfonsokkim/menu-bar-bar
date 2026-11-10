@@ -23,14 +23,7 @@ enum ChevronArtwork {
         return image
     }
 
-    static func foreground(over image: NSImage?) -> Color {
-        guard let cg = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let color = NSBitmapImageRep(cgImage: cg).colorAt(x: cg.width / 2, y: 0)?.usingColorSpace(.sRGB) else {
-            return .primary
-        }
-        let brightness = color.redComponent * 0.2126 + color.greenComponent * 0.7152 + color.blueComponent * 0.0722
-        return brightness < 0.6 ? .white : .black
-    }
+
 }
 
 private struct FallingChevron: Shape {

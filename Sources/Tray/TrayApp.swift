@@ -24,8 +24,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var screenAccess = false
     @Published var accessibilityAccess = false
     @Published var message = ""
-    @Published var menuBarSurface: NSImage?
-    @Published var menuBarSurfaceFrame: CGRect = .zero
     @Published var rowHeight: CGFloat = NSStatusBar.system.thickness
     @Published var shelfPresented = false
     @Published var shelfOriginX: CGFloat = 0
@@ -47,10 +45,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private let hiddenChevronImage = ChevronArtwork.image(hidden: true)
     private var settings: NSWindow?
     private var timer: Timer?
-    private var surfaceTimer: Timer?
-    private var surfaceTask: Task<Void, Never>?
-    private var surfaceSample: (background: MenuBarBackdrop.Background, frame: CGRect, scale: CGFloat)?
-    var menuBarWindowID: CGWindowID? { surfaceSample?.background.windowID }
     private var outsideMonitor: Any?
     private var keyMonitor: Any?
     var itemFrames: [UInt32: CGRect] = [:]
@@ -74,7 +68,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private var sources: [SourceItem] = []
     private var sourceTransitionItems: [MenuItem] = []
     private var triggerFrame = CGRect.zero
-    private let backdrop = MenuBarBackdrop()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         trigger = NSStatusBar.system.statusItem(withLength: 28)
@@ -151,8 +144,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         moveTask?.cancel()
         chevronTask?.cancel()
         timer?.invalidate()
-        surfaceTimer?.invalidate()
-        surfaceTask?.cancel()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
     }
@@ -203,7 +194,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                   !["Clock", "BentoBox-0", "AudioVideoModule"].contains(window.title) else { return nil }
             return AvailableStatusItem(window: window, name: source.name)
         }
-        let latest = MenuItems.read(divider: frame, captureImages: screenAccess && panel?.isVisible == true, sources: sources, knownItems: sourceTransitionItems)
+        let latest = MenuItems.read(divider: frame, captureImages: screenAccess && (panel?.isVisible == true || isArranging), sources: sources, knownItems: sourceTransitionItems)
         let previousIDs = items.map(\.id)
         if !latest.isEmpty || scanTask == nil {
             items = ShelfOrder.indices(for: latest.map(\.orderKey), saved: savedShelfOrder).map { latest[$0] }
@@ -241,20 +232,18 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         shelfPresentationRevision += 1
         animatesShelf = NSApp.currentEvent?.type != .keyDown && NSApp.currentEvent?.type != .keyUp
         shelfPresented = true
-        backdrop.invalidate()
         refresh()
-        layoutShelf(shelf, forceSurfaceRefresh: true)
+        layoutShelf(shelf)
         let needsContent = !shelf.isVisible || !(shelf.contentView is NSHostingView<ShelfView>)
         // Mount only after opening state is established. An initial closed
         // SwiftUI callback must never dismiss the host being opened.
         if needsContent { shelf.contentView = ShelfHostingView(controller: self) }
         shelf.makeKeyAndOrderFront(nil)
-        startSurfaceRefresh()
         updateItems()
         animateChevron(opening: true, animated: animatesShelf)
     }
 
-    private func layoutShelf(_ shelf: ShelfPanel, forceSurfaceRefresh: Bool = false, animateResize: Bool = false) {
+    private func layoutShelf(_ shelf: ShelfPanel, animateResize: Bool = false) {
         guard let window = trigger.button?.window,
               var screen = window.screen ?? NSScreen.main else { return }
         var anchor = window.frame
@@ -272,12 +261,12 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                 screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: anchor.midX, y: anchor.midY)) }) ?? screen
             }
         }
-        let background = backdrop.background(for: screen)
-        rowHeight = background?.barFrame.height ?? max(NSStatusBar.system.thickness, anchor.height)
+        let barFrame = MenuBarGeometry.frame(for: screen)
+        rowHeight = barFrame?.height ?? max(NSStatusBar.system.thickness, anchor.height)
         let width: CGFloat = items.isEmpty ? rowHeight * 8 : items.reduce(0) {
             $0 + ShelfSurface.cellWidth(itemWidth: $1.frame.width)
         }
-        let menuBarBottom = background.flatMap { value in NSScreen.screens.first.map { $0.frame.maxY - value.barFrame.maxY } } ?? anchor.minY
+        let menuBarBottom = barFrame.flatMap { value in NSScreen.screens.first.map { $0.frame.maxY - value.maxY } } ?? anchor.minY
         triggerFrame = anchor
         let frame = ShelfSurface.frame(anchor: anchor, screen: screen.frame, menuBarBottom: menuBarBottom,
                                        bodyWidth: width, height: rowHeight, scale: screen.backingScaleFactor)
@@ -286,18 +275,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         let targetChanged = shelfFrameTarget != panelFrame
         let shouldAnimate = animateResize && shelfPresented && shelf.isVisible &&
             !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && chevronTask == nil
-        // Cover the whole resize path. The view crops the material in screen
-        // coordinates instead of stretching the final sample during the tween.
-        let sampleFrame: CGRect
-        if targetChanged && shouldAnimate {
-            let left = min(shelf.frame.minX, frame.minX)
-            let right = max(shelf.frame.maxX, frame.maxX)
-            sampleFrame = CGRect(x: left, y: frame.minY, width: right - left, height: frame.height)
-        } else if !targetChanged, surfaceSample?.background == background, let sample = surfaceSample {
-            sampleFrame = sample.frame
-        } else {
-            sampleFrame = frame
-        }
         if targetChanged || !shelf.isVisible {
             shelfFrameTarget = panelFrame
             if shouldAnimate {
@@ -311,71 +288,11 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
         shelfOriginX = anchor.midX - frame.minX
-        let sampleChanged = surfaceSample?.background != background ||
-            surfaceSample?.frame != sampleFrame || surfaceSample?.scale != screen.backingScaleFactor
-        if sampleChanged || !shelfPresented || forceSurfaceRefresh {
-            surfaceTask?.cancel()
-            surfaceTask = nil
-            surfaceSample = background.map { ($0, sampleFrame, screen.backingScaleFactor) }
-            refreshSurface()
-        } else {
-            refreshSurfaceInBackground()
-        }
-    }
-
-    private func refreshSurface() {
-        // The falling strokes briefly cross the sampled row. Keep the clean
-        // background until they have finished so they cannot leave a stripe.
-        guard chevronTask == nil else { return }
-        menuBarSurfaceFrame = surfaceSample?.frame ?? .zero
-        menuBarSurface = screenAccess ? surfaceSample.flatMap {
-            backdrop.image(for: $0.background, shelfFrame: $0.frame, scale: $0.scale)
-        } : nil
-    }
-
-    private func refreshSurfaceInBackground() {
-        guard screenAccess else {
-            surfaceTask?.cancel()
-            surfaceTask = nil
-            menuBarSurface = nil
-            return
-        }
-        guard surfaceTask == nil, chevronTask == nil, let sample = surfaceSample else { return }
-        surfaceTask = Task { [weak self] in
-            let image = await MenuBarBackdrop.refreshedImage(for: sample.background,
-                                                           shelfFrame: sample.frame, scale: sample.scale)
-            guard !Task.isCancelled, let self else { return }
-            self.surfaceTask = nil
-            guard self.screenAccess, self.shelfPresented, self.chevronTask == nil,
-                  let image, image.width > 0, image.height > 0 else { return }
-            self.menuBarSurfaceFrame = sample.frame
-            self.menuBarSurface = NSImage(cgImage: image,
-                                         size: CGSize(width: sample.frame.width, height: CGFloat(image.height) / max(1, sample.scale)))
-        }
-    }
-
-    private func startSurfaceRefresh() {
-        surfaceTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.shelfPresented else { return }
-                self.refreshSurfaceInBackground()
-            }
-        }
-        timer.tolerance = 0.02
-        // Native menus track in a separate run-loop mode. Keep matching their
-        // background without repeating the slower Accessibility icon scan.
-        RunLoop.main.add(timer, forMode: .common)
-        surfaceTimer = timer
     }
 
     func hideShelf(animated: Bool = true) {
         cancelDrag()
         moveTask?.cancel()
-        surfaceTimer?.invalidate()
-        surfaceTimer = nil
-        surfaceTask?.cancel()
-        surfaceTask = nil
         activationTask?.cancel()
         bundledMenuPresenter.cancel()
         activePopupID = nil
@@ -398,8 +315,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func animateChevron(opening: Bool, animated: Bool) {
-        surfaceTask?.cancel()
-        surfaceTask = nil
         chevronTask?.cancel()
         chevronTask = nil
         let target: CGFloat = opening ? 1 : 0
@@ -413,7 +328,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         let overlay = chevronPanel ?? ChevronPanel()
         chevronPanel = overlay
         chevronMenuHeight = triggerFrame.height
-        chevronForeground = ChevronArtwork.foreground(over: menuBarSurface)
+        chevronForeground = trigger.button?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
         if !(overlay.contentView is NSHostingView<ChevronSplashView>) {
             overlay.contentView = NSHostingView(rootView: ChevronSplashView(controller: self))
         }
@@ -441,7 +356,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                     self.chevronPanel?.orderOut(nil)
                     self.trigger.button?.image = opening ? self.hiddenChevronImage : self.chevronImage
                     self.chevronTask = nil
-                    if self.shelfPresented { self.refreshSurfaceInBackground() }
                     return
                 }
                 do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
@@ -633,7 +547,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func currentShelfDropContext() -> (bar: CGRect, trigger: StatusWindow)? {
         guard let trigger = visibleTrigger(),
-              let bar = NSScreen.screens.compactMap({ backdrop.background(for: $0)?.barFrame }).first(where: {
+              let bar = NSScreen.screens.compactMap({ MenuBarGeometry.frame(for: $0) }).first(where: {
                   $0.contains(CGPoint(x: trigger.frame.midX, y: trigger.frame.midY))
               }) else { return nil }
         return (bar, trigger)
@@ -848,18 +762,6 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
 }
 
 final class ShelfPanel: NSPanel {
-    let materialBridge = MenuMaterialBridge()
-
-    override func orderOut(_ sender: Any?) {
-        materialBridge.orderOut(sender)
-        super.orderOut(sender)
-    }
-
-    override func close() {
-        materialBridge.close()
-        super.close()
-    }
-
     override var canBecomeKey: Bool { true }
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
