@@ -17,15 +17,6 @@ struct FlaredShelf: Shape {
     }
 }
 
-/// Keep native glyphs legible over light and dark areas of the wallpaper.
-struct StatusIconContrast: ViewModifier {
-    func body(content: Content) -> some View {
-        content.compositingGroup()
-            .shadow(color: .white.opacity(0.85), radius: 0.65)
-            .shadow(color: .black.opacity(0.65), radius: 0.65)
-    }
-}
-
 private struct ItemFramesKey: PreferenceKey {
     nonisolated static var defaultValue: [UInt32: CGRect] { [:] }
     nonisolated static func reduce(value: inout [UInt32: CGRect], nextValue: () -> [UInt32: CGRect]) {
@@ -61,7 +52,6 @@ struct ShelfView: View {
                                     }
                                 }
                                 .frame(width: item.isLiveImage ? item.frame.width : 18, height: item.isLiveImage ? controller.rowHeight : 18)
-                                .modifier(StatusIconContrast())
                                 .frame(width: ShelfSurface.cellWidth(itemWidth: item.frame.width), height: controller.rowHeight)
                                 .contentShape(Rectangle())
                             }
@@ -118,8 +108,8 @@ struct ShelfView: View {
         .allowsHitTesting(controller.shelfPresented)
         .coordinateSpace(name: "Shelf")
         .onPreferenceChange(ItemFramesKey.self) { controller.itemFrames = $0 }
-        .onChange(of: controller.shelfPresented, initial: true) { _, shown in
-            let revision = controller.shelfPresentationRevision
+        .onChange(of: controller.shelfPresentationRevision, initial: true) { _, revision in
+            let shown = controller.shelfPresented
             let animation: Animation? = controller.animatesShelf
                 ? (reduceMotion
                    ? .timingCurve(0.23, 1, 0.32, 1, duration: 0.12)
@@ -129,7 +119,7 @@ struct ShelfView: View {
             withAnimation(animation, completionCriteria: .removed) {
                 reveal = shown ? 1 : 0
             } completion: {
-                if !shown { controller.finishShelfDismissal(revision: revision) }
+                controller.finishShelfTransition(revision: revision)
             }
         }
     }

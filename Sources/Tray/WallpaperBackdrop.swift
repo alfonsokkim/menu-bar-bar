@@ -123,6 +123,7 @@ struct WallpaperSurface: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WallpaperSurfaceView { WallpaperSurfaceView() }
     func updateNSView(_ view: WallpaperSurfaceView, context: Context) {
+        guard view.snapshot?.image !== snapshot?.image || view.snapshot?.frame != snapshot?.frame else { return }
         view.snapshot = snapshot
         view.needsDisplay = true
     }

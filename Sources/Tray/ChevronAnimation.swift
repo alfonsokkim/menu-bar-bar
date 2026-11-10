@@ -42,15 +42,34 @@ private struct FallingChevron: Shape {
     }
 }
 
+private struct ChevronStrokes: View, Animatable {
+    var phase: CGFloat
+    let menuHeight: CGFloat
+    let rowHeight: CGFloat
+    let originX: CGFloat
+    let foreground: Color
+
+    nonisolated var animatableData: CGFloat {
+        get { phase }
+        set { phase = newValue }
+    }
+
+    var body: some View {
+        FallingChevron(phase: phase, menuHeight: menuHeight,
+                       travel: (menuHeight / 2 + rowHeight * 0.15) / 0.36,
+                       originX: originX)
+            .stroke(foreground, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .opacity(Double(ChevronGeometry.opacity(phase: phase)))
+    }
+}
+
 struct ChevronSplashView: View {
     @ObservedObject var controller: TrayController
 
     var body: some View {
-        FallingChevron(phase: controller.chevronPhase, menuHeight: controller.chevronMenuHeight,
-                       travel: (controller.chevronMenuHeight / 2 + controller.rowHeight * 0.15) / 0.36,
-                       originX: controller.chevronOriginX)
-            .stroke(controller.chevronForeground, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-            .opacity(Double(ChevronGeometry.opacity(phase: controller.chevronPhase)))
+        ChevronStrokes(phase: controller.chevronPhase, menuHeight: controller.chevronMenuHeight,
+                       rowHeight: controller.rowHeight, originX: controller.chevronOriginX,
+                       foreground: controller.chevronForeground)
             .accessibilityHidden(true)
             .allowsHitTesting(false)
     }

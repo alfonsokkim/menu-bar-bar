@@ -41,6 +41,9 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private var shelfFrameTarget: CGRect?
     private var chevronPanel: ChevronPanel?
     private var chevronTask: Task<Void, Never>?
+    private var chevronTransition: ChevronTransition?
+    private var shelfIsAnimating = false
+    private var refreshPending = false
     private let chevronImage = ChevronArtwork.image()
     private let hiddenChevronImage = ChevronArtwork.image(hidden: true)
     private var settings: NSWindow?
@@ -161,6 +164,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func refresh() {
+        guard !shelfIsAnimating else { refreshPending = true; return }
         screenAccess = CGPreflightScreenCaptureAccess()
         accessibilityAccess = AXIsProcessTrusted()
         if accessibilityAccess && scanTask == nil && movingItemID == nil && shelfDraggedItemID == nil {
@@ -184,6 +188,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func updateItems() {
+        guard !shelfIsAnimating else { refreshPending = true; return }
         guard shelfDraggedItemID == nil, movingItemID == nil else { return }
         guard let frame = MenuItems.frame(of: divider.button?.window, title: "Tray.Divider") else { return }
         availableToBundle = StatusWindow.all().compactMap { window in
@@ -229,21 +234,25 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             shelf = ShelfPanel()
             panel = shelf
         }
-        shelfPresentationRevision += 1
         animatesShelf = NSApp.currentEvent?.type != .keyDown && NSApp.currentEvent?.type != .keyUp
+        // Keep expensive captures outside the transition. The existing icon
+        // cache and wallpaper provide its first frame; refresh after it settles.
+        layoutShelf(shelf, refreshWallpaper: false)
+        // Layout can synchronously update a retained SwiftUI host. Publish the
+        // new revision only once that work is finished and opening can begin.
+        shelfPresentationRevision += 1
+        shelfIsAnimating = true
+        refreshPending = true
         shelfPresented = true
-        refresh()
-        layoutShelf(shelf)
-        let needsContent = !shelf.isVisible || !(shelf.contentView is NSHostingView<ShelfView>)
+        let needsContent = !(shelf.contentView is ShelfHostingView)
         // Mount only after opening state is established. An initial closed
         // SwiftUI callback must never dismiss the host being opened.
         if needsContent { shelf.contentView = ShelfHostingView(controller: self) }
         shelf.makeKeyAndOrderFront(nil)
-        updateItems()
         animateChevron(opening: true, animated: animatesShelf)
     }
 
-    private func layoutShelf(_ shelf: ShelfPanel, animateResize: Bool = false) {
+    private func layoutShelf(_ shelf: ShelfPanel, animateResize: Bool = false, refreshWallpaper: Bool = true) {
         guard let window = trigger.button?.window,
               var screen = window.screen ?? NSScreen.main else { return }
         var anchor = window.frame
@@ -289,7 +298,11 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
         shelfOriginX = anchor.midX - frame.minX
-        wallpaper = screenAccess ? WallpaperBackdrop.snapshot(for: panelFrame, screen: screen) : nil
+        if !screenAccess {
+            wallpaper = nil
+        } else if refreshWallpaper || wallpaper?.frame.contains(panelFrame) != true {
+            wallpaper = WallpaperBackdrop.snapshot(for: panelFrame, screen: screen)
+        }
     }
 
     func hideShelf(animated: Bool = true) {
@@ -302,18 +315,20 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         guard shelfPresented || !animated else { return }
         shelfPresentationRevision += 1
         animatesShelf = animated
+        shelfIsAnimating = animated
         shelfPresented = false
         animateChevron(opening: false, animated: animated)
-        if !animated {
-            panel?.orderOut(nil)
-            panel?.contentView = nil
-        }
+        if !animated { finishShelfTransition(revision: shelfPresentationRevision) }
     }
 
-    func finishShelfDismissal(revision: Int) {
-        guard revision == shelfPresentationRevision, !shelfPresented else { return }
-        panel?.orderOut(nil)
-        panel?.contentView = nil
+    func finishShelfTransition(revision: Int) {
+        guard revision == shelfPresentationRevision else { return }
+        shelfIsAnimating = false
+        if !shelfPresented { panel?.orderOut(nil) }
+        if refreshPending {
+            refreshPending = false
+            refresh()
+        }
     }
 
     private func animateChevron(opening: Bool, animated: Bool) {
@@ -322,6 +337,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         let target: CGFloat = opening ? 1 : 0
         guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
               triggerFrame.height > 0 else {
+            chevronTransition = nil
             chevronPhase = target
             chevronPanel?.orderOut(nil)
             trigger.button?.image = opening ? hiddenChevronImage : chevronImage
@@ -340,28 +356,23 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                                 width: shelfFrame.width, height: triggerFrame.height + rowHeight), display: true)
         trigger.button?.image = hiddenChevronImage
         overlay.orderFrontRegardless()
-        // The strokes are already invisible past 0.6. Start their return there
-        // so closing does not wait through an invisible part of the trajectory.
-        let start = opening ? chevronPhase : min(0.6, chevronPhase)
-        chevronPhase = start
-        let duration = max(0.08, 0.22 * Double(abs(target - start)))
-        let began = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
+        let current = chevronTransition?.phase(at: now) ?? chevronPhase
+        let transition = ChevronTransition(opening: opening, phase: current, began: now)
+        chevronTransition = transition
+        // Retarget from the visible phase when a click interrupts the motion.
+        // SwiftUI interpolates this small view on its display-driven clock.
+        var reset = Transaction(animation: nil)
+        reset.disablesAnimations = true
+        withTransaction(reset) { chevronPhase = transition.start }
+        withAnimation(.linear(duration: transition.duration)) { chevronPhase = transition.target }
         chevronTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                let elapsed = min(1, (ProcessInfo.processInfo.systemUptime - began) / duration)
-                // Geometry supplies a fall from rest under gravity. Reversing
-                // the same trajectory reforms the two strokes as they rise.
-                self.chevronPhase = start + (target - start) * elapsed
-                if elapsed >= 1 || (opening && self.chevronPhase >= 0.6) {
-                    self.chevronPhase = target
-                    self.chevronPanel?.orderOut(nil)
-                    self.trigger.button?.image = opening ? self.hiddenChevronImage : self.chevronImage
-                    self.chevronTask = nil
-                    return
-                }
-                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
-            }
+            do { try await Task.sleep(for: .seconds(transition.duration)) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.chevronTransition = nil
+            self.chevronPanel?.orderOut(nil)
+            self.trigger.button?.image = opening ? self.hiddenChevronImage : self.chevronImage
+            self.chevronTask = nil
         }
     }
 

@@ -1,6 +1,5 @@
 import AppKit
 import Testing
-import SwiftUI
 @testable import Tray
 
 @MainActor private func icon(alpha: UInt8) throws -> CGImage {
@@ -81,27 +80,4 @@ import SwiftUI
     #expect(MenuItems.deduplicated([mirror, item(10, 20, frame, live: false)]).map(\.id) == [10])
     let capturedMirror = MenuItems.deduplicated([item(10, 20, frame, live: false), item(30, 20, frame, live: true)])
     #expect(capturedMirror.map(\.id) == [10])
-}
-
-@MainActor @Test func iconEdgesRemainVisibleAgainstMatchingBackgrounds() throws {
-    for white in [false, true] {
-        let glyph = Rectangle().fill(white ? Color.white : Color.black)
-            .frame(width: 10, height: 10)
-            .modifier(StatusIconContrast())
-            .frame(width: 30, height: 30)
-        let renderer = ImageRenderer(content: glyph)
-        renderer.scale = 2
-        let image = try #require(renderer.cgImage)
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        // The empty shelf remains clear, while pixels around the matching
-        // black/black or white/white glyph provide a visible contrast edge.
-        #expect(bitmap.colorAt(x: 0, y: 0)?.alphaComponent == 0)
-        var contrast: CGFloat = 0
-        for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
-            let colour = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
-            let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
-            contrast = max(contrast, colour.alphaComponent * (white ? 1 - brightness : brightness))
-        } }
-        #expect(contrast > 0.15)
-    }
 }
