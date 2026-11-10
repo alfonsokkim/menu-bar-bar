@@ -123,3 +123,69 @@ import Testing
     #expect(selected.frame == bar)
     #expect(MenuBarGeometry.window(in: Array(windows.prefix(2)), display: display) == nil)
 }
+
+@MainActor @Test func nativeEdgeRejectsRedactedAndEmptyCapturesButPreservesDarkBars() throws {
+    func material(fill: NSColor, glyph: Bool = false, colouredBottom: Bool = false, transparentBottom: Bool = false) throws -> CGImage {
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 3,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        for y in 0..<3 { for x in 0..<4 { bitmap.setColor(fill, atX: x, y: y) } }
+        if glyph { bitmap.setColor(NSColor(deviceRed: 1, green: 1, blue: 1, alpha: 1), atX: 1, y: 0) }
+        if colouredBottom { bitmap.setColor(NSColor(deviceRed: 1, green: 0, blue: 0, alpha: 1), atX: 2, y: 2) }
+        if transparentBottom {
+            for x in 0..<4 { bitmap.setColor(NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 0), atX: x, y: 2) }
+        }
+        return try #require(bitmap.cgImage)
+    }
+    let black = NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 1)
+    let empty = try material(fill: NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 0))
+    #expect(WallpaperBackdrop.nativeEdge(from: empty) == nil)
+    let redacted = try material(fill: black)
+    #expect(WallpaperBackdrop.nativeEdge(from: redacted) == nil)
+    // A white menu glyph proves this is a real black bar, not an empty capture.
+    let emptyBottom = try material(fill: black, glyph: true, transparentBottom: true)
+    #expect(WallpaperBackdrop.nativeEdge(from: emptyBottom) == nil)
+    let dark = try material(fill: black, glyph: true)
+    let edge = try #require(WallpaperBackdrop.nativeEdge(from: dark))
+    #expect(edge.width == 4 && edge.height == 1)
+    let bottom = NSBitmapImageRep(cgImage: edge)
+    for x in 0..<4 {
+        let colour = try #require(bottom.colorAt(x: x, y: 0)?.usingColorSpace(.deviceRGB))
+        #expect(colour.redComponent == 0 && colour.greenComponent == 0 && colour.blueComponent == 0)
+        #expect(colour.alphaComponent == 1)
+    }
+    let coloured = try material(fill: black, glyph: true, colouredBottom: true)
+    let colouredEdge = try #require(WallpaperBackdrop.nativeEdge(from: coloured))
+    let pixel = try #require(NSBitmapImageRep(cgImage: colouredEdge).colorAt(x: 2, y: 0)?.usingColorSpace(.deviceRGB))
+    #expect(pixel.redComponent == 1 && pixel.greenComponent == 0 && pixel.blueComponent == 0)
+}
+
+@MainActor @Test func wallpaperJoinCompositesPartialAlphaAndLeavesMissingColumnsUntouched() throws {
+    let wallpaper = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 4,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    let edge = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 1,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    for y in 0..<4 { for x in 0..<2 {
+        wallpaper.setColor(NSColor(deviceRed: 0.2, green: 0.4, blue: 0.6, alpha: 1), atX: x, y: y)
+    } }
+    edge.setColor(NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 0), atX: 0, y: 0)
+    edge.setColor(NSColor(deviceRed: 0.8, green: 0, blue: 0, alpha: 0.5), atX: 1, y: 0)
+    let source = try #require(wallpaper.cgImage)
+    let sample = try #require(edge.cgImage)
+    let joined = try #require(WallpaperBackdrop.joinedImage(wallpaper: source, edge: sample, transitionPixels: 3))
+    let result = NSBitmapImageRep(cgImage: joined)
+    for y in 0..<4 {
+        let unchanged = try #require(result.colorAt(x: 0, y: y)?.usingColorSpace(.deviceRGB))
+        #expect(abs(unchanged.redComponent - 0.2) < 0.01)
+        #expect(abs(unchanged.greenComponent - 0.4) < 0.01)
+        #expect(abs(unchanged.blueComponent - 0.6) < 0.01)
+        #expect(unchanged.alphaComponent == 1)
+    }
+    let composite = try #require(result.colorAt(x: 1, y: 0)?.usingColorSpace(.deviceRGB))
+    #expect(abs(composite.redComponent - 0.5) < 0.01)
+    #expect(abs(composite.greenComponent - 0.2) < 0.01)
+    #expect(abs(composite.blueComponent - 0.3) < 0.01)
+    #expect(composite.alphaComponent == 1)
+}

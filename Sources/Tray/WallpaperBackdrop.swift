@@ -52,13 +52,31 @@ enum WallpaperBackdrop {
             if let material = capture?(bar.frame,
                     CGWindowListOption.optionOnScreenBelowWindow.union(.optionIncludingWindow).rawValue,
                     bar.id, CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
-               let edge = material.cropping(to: CGRect(x: 0, y: material.height - 1,
-                                                       width: material.width, height: 1)),
-               StatusIconCache.hasVisiblePixels(edge) {
+               let edge = nativeEdge(from: material) {
                 joined = joinedImage(wallpaper: image, edge: edge, transitionPixels: Int(12 * scale)) ?? image
             }
         }
         return WallpaperSnapshot(image: joined, frame: frame)
+    }
+
+    /// WindowServer sometimes returns the entire bar as opaque black. A real
+    /// dark bar still contains its menu titles. Never extend an empty capture.
+    static func nativeEdge(from material: CGImage) -> CGImage? {
+        let width = material.width
+        let height = material.height
+        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: format),
+              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        context.draw(material, in: CGRect(x: 0, y: 0, width: width, height: height))
+        for offset in stride(from: 0, to: context.bytesPerRow * height, by: 4) {
+            if pixels[offset + 3] > 0 && (pixels[offset] > 0 || pixels[offset + 1] > 0 || pixels[offset + 2] > 0) {
+                guard let edge = material.cropping(to: CGRect(x: 0, y: height - 1, width: width, height: 1)),
+                      StatusIconCache.hasVisiblePixels(edge) else { return nil }
+                return edge
+            }
+        }
+        return nil
     }
 
     /// Carry the native edge's colour correction into the first few wallpaper
@@ -88,7 +106,8 @@ enum WallpaperBackdrop {
                 let column = x * 4
                 let offset = y * output.bytesPerRow + column
                 for channel in 0..<3 {
-                    let correction = Double(Int(edgePixels[column + channel]) - Int(top[column + channel]))
+                    let alpha = Double(edgePixels[column + 3]) / 255
+                    let correction = Double(edgePixels[column + channel]) - Double(top[column + channel]) * alpha
                     let value = Double(pixels[offset + channel]) + correction * weight
                     pixels[offset + channel] = UInt8(clamping: Int(value.rounded()))
                 }
