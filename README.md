@@ -10,13 +10,23 @@ A menu bar inside your menu bar. Tuck less-used Mac utilities behind a chevron a
 
 ## Install and run
 
+[Download Menu Bar Bar for Apple Silicon](https://github.com/alfonsokkim/menu-bar-bar/releases/latest/download/Menu-Bar-Bar-mac.zip).
+
+Unzip the download, move **Menu Bar Bar.app** to Applications, and open it. This download is signed with Developer ID, notarized by Apple, and includes its notarization ticket. It does not require Xcode, Swift, or an Apple developer account. macOS may ask you to confirm **Open** on first launch; Screen Recording and Accessibility still need to be enabled separately.
+
+If Menu Bar Bar is already installed, quit it and replace that same app bundle rather than keeping multiple copies. Switching from a local source build to the signed download may require granting permissions again.
+
 If you use Claude Code, run:
 
 ```sh
 claude 'install and run https://github.com/alfonsokkim/menu-bar-bar following its readme'
 ```
 
-Or install manually. You need the Xcode Command Line Tools and Swift 6.2 or newer (`swift --version`). If the installed tools have an older Swift version, install a newer Xcode release and select its toolchain. No Apple developer account or personal signing certificate is required.
+Use the download above on Apple Silicon. Intel users and developers can build from source below; Intel Macs remain unverified.
+
+### Build from source
+
+You need the Xcode Command Line Tools and Swift 6.2 or newer (`swift --version`). If the installed tools have an older Swift version, install a newer Xcode release and select its toolchain. No Apple developer account or personal signing certificate is required.
 
 ```sh
 git clone https://github.com/alfonsokkim/menu-bar-bar.git
@@ -82,4 +92,4 @@ export MENUBARBAR_NOTARY_PROFILE='your-notarytool-keychain-profile'
 ./scripts/package-release.sh
 ```
 
-The packaging script verifies signing and Apple's notarization result before producing a ZIP. It keeps signing credentials outside the repository. No notarized binary is included in this source preview.
+The packaging script verifies signing and Apple's notarization result before producing a ZIP. It keeps signing credentials outside the repository. Published binaries and their SHA-256 checksums are available on the [releases page](https://github.com/alfonsokkim/menu-bar-bar/releases).
