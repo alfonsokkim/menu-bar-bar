@@ -42,8 +42,61 @@ enum WallpaperBackdrop {
                                    CGWindowListOption.optionIncludingWindow.rawValue, id,
                                    CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
               StatusIconCache.hasVisiblePixels(image) else { return nil }
-        return WallpaperSnapshot(image: image, frame: frame)
+        // Match the native surface at the join, then ease back to the sharp
+        // wallpaper. Sampling only its bottom pixel excludes status glyphs.
+        var joined = image
+        if let bar = MenuBarGeometry.window(in: windows, display: display) {
+            let scale = screen.backingScaleFactor
+            // WindowServer can return an opaque white image for a sub-point
+            // capture. Capture the bar at its native size before cropping.
+            if let material = capture?(bar.frame,
+                    CGWindowListOption.optionOnScreenBelowWindow.union(.optionIncludingWindow).rawValue,
+                    bar.id, CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
+               let edge = material.cropping(to: CGRect(x: 0, y: material.height - 1,
+                                                       width: material.width, height: 1)),
+               StatusIconCache.hasVisiblePixels(edge) {
+                joined = joinedImage(wallpaper: image, edge: edge, transitionPixels: Int(12 * scale)) ?? image
+            }
+        }
+        return WallpaperSnapshot(image: joined, frame: frame)
     }
+
+    /// Carry the native edge's colour correction into the first few wallpaper
+    /// rows. Preserve the wallpaper's detail and leave all lower rows untouched.
+    static func joinedImage(wallpaper: CGImage, edge: CGImage, transitionPixels: Int) -> CGImage? {
+        let width = wallpaper.width
+        let height = wallpaper.height
+        let rows = min(height, transitionPixels)
+        guard rows > 1 else { return wallpaper }
+        let space = wallpaper.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let output = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: space, bitmapInfo: format),
+              let sample = CGContext(data: nil, width: width, height: 1, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: space, bitmapInfo: format),
+              let pixels = output.data?.assumingMemoryBound(to: UInt8.self),
+              let edgePixels = sample.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        output.draw(wallpaper, in: CGRect(x: 0, y: 0, width: width, height: height))
+        sample.interpolationQuality = .none
+        sample.draw(edge, in: CGRect(x: 0, y: 0, width: width, height: 1))
+        // Save the original top row before modifying it.
+        let top = Array(UnsafeBufferPointer(start: pixels, count: width * 4))
+        for y in 0..<rows {
+            let t = Double(y) / Double(rows - 1)
+            let weight = 1 - t * t * (3 - 2 * t)
+            for x in 0..<width {
+                let column = x * 4
+                let offset = y * output.bytesPerRow + column
+                for channel in 0..<3 {
+                    let correction = Double(Int(edgePixels[column + channel]) - Int(top[column + channel]))
+                    let value = Double(pixels[offset + channel]) + correction * weight
+                    pixels[offset + channel] = UInt8(clamping: Int(value.rounded()))
+                }
+            }
+        }
+        return output.makeImage()
+    }
+
 }
 
 struct WallpaperSurface: NSViewRepresentable {

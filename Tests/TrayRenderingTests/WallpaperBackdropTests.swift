@@ -58,3 +58,68 @@ import Testing
         #expect(actual.alphaComponent == 1)
     } }
 }
+
+@MainActor @Test(arguments: [1, 2]) func wallpaperJoinMatchesNativeEdgeAndPreservesLowerDetail(scale: Int) throws {
+    let width = 6 * scale
+    let height = 20 * scale
+    let rows = 12 * scale
+    func bitmap(_ height: Int) throws -> NSBitmapImageRep {
+        try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    }
+    let wallpaper = try bitmap(height)
+    let edge = try bitmap(1)
+    for x in 0..<width {
+        // Different correction signs on neighbouring columns catch averaging
+        // or stretching the edge instead of keeping its screen coordinates.
+        edge.setColor(NSColor(deviceRed: x.isMultiple(of: 2) ? 0.3 : 0.7,
+                              green: 0.5, blue: 0.5, alpha: 1), atX: x, y: 0)
+        for y in 0..<height {
+            wallpaper.setColor(NSColor(deviceRed: 0.5 + CGFloat(y) / 255,
+                                       green: 0.4, blue: 0.6, alpha: 1), atX: x, y: y)
+        }
+    }
+    let wallpaperImage = try #require(wallpaper.cgImage)
+    let edgeImage = try #require(edge.cgImage)
+    let joined = try #require(WallpaperBackdrop.joinedImage(
+        wallpaper: wallpaperImage, edge: edgeImage, transitionPixels: rows))
+    let result = NSBitmapImageRep(cgImage: joined)
+    for x in 0..<width {
+        let native = try #require(edge.colorAt(x: x, y: 0)?.usingColorSpace(.deviceRGB))
+        let top = try #require(result.colorAt(x: x, y: 0)?.usingColorSpace(.deviceRGB))
+        #expect(abs(native.redComponent - top.redComponent) < 0.01)
+        #expect(abs(native.greenComponent - top.greenComponent) < 0.01)
+        #expect(abs(native.blueComponent - top.blueComponent) < 0.01)
+        for y in (rows - 1)..<height {
+            let original = try #require(wallpaper.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+            let actual = try #require(result.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+            #expect(abs(original.redComponent - actual.redComponent) < 0.01)
+            #expect(abs(original.greenComponent - actual.greenComponent) < 0.01)
+            #expect(abs(original.blueComponent - actual.blueComponent) < 0.01)
+            #expect(actual.alphaComponent == 1)
+        }
+        // The transition must not introduce another hard colour step.
+        for y in 1...rows {
+            let previous = try #require(result.colorAt(x: x, y: y - 1)?.usingColorSpace(.deviceRGB))
+            let current = try #require(result.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+            #expect(abs(previous.redComponent - current.redComponent) < 0.04)
+        }
+    }
+}
+
+@MainActor @Test func menuBarEdgeSelectionUsesTheTargetDisplayOnly() throws {
+    let display = CGRect(x: -1920, y: -1080, width: 1920, height: 1080)
+    func window(_ id: CGWindowID, _ layer: CGWindowLevelKey, _ frame: CGRect) -> [String: Any] {
+        [kCGWindowNumber as String: id, kCGWindowLayer as String: Int(CGWindowLevelForKey(layer)),
+         kCGWindowBounds as String: frame.dictionaryRepresentation]
+    }
+    let bar = CGRect(x: -1920, y: -1080, width: 1920, height: 24)
+    let windows = [window(1, .normalWindow, bar),
+                   window(2, .mainMenuWindow, CGRect(x: 0, y: 0, width: 1800, height: 39)),
+                   window(3, .mainMenuWindow, bar)]
+    let selected = try #require(MenuBarGeometry.window(in: windows, display: display))
+    #expect(selected.id == 3)
+    #expect(selected.frame == bar)
+    #expect(MenuBarGeometry.window(in: Array(windows.prefix(2)), display: display) == nil)
+}
