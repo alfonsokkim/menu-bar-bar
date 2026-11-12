@@ -87,3 +87,70 @@ func shelfUsesExactlyTheNativeBarHeightAndDoesNotCoverItsPixels(scale: CGFloat) 
         #expect(mask.boundingBoxOfPath.height == height)
     }
 }
+
+@Test(arguments: [CGFloat(1), CGFloat(2)])
+func shadowBlendKeepsTheBodyFlushAndItsShapeUnchanged(scale: CGFloat) {
+    for height: CGFloat in [24, 30, 39] {
+        let bottom: CGFloat = 1169 - height
+        let body = ShelfSurface.frame(anchor: CGRect(x: 1350, y: bottom, width: 28, height: height),
+            screen: CGRect(x: 0, y: 0, width: 1800, height: 1169),
+            menuBarBottom: bottom, bodyWidth: 222, height: height, scale: scale)
+        let join = ShelfSurface.joinHeight(rowHeight: body.height)
+        let panel = ShelfSurface.panelFrame(body: body, joinHeight: join)
+        #expect(panel.minY == body.minY)
+        #expect(panel.maxY - join == bottom)
+        #expect(panel.height - join == height)
+        #expect(panel.maxY * scale == (panel.maxY * scale).rounded())
+        let original = ShelfSurface.path(in: CGRect(origin: .zero, size: body.size))
+        let joined = ShelfSurface.liquidPath(in: CGRect(origin: .zero, size: panel.size),
+            progress: 1, originX: 100, joinHeight: join)
+        for x in stride(from: CGFloat(0), through: body.width, by: 2) {
+            for y in stride(from: CGFloat(1), through: height - 1, by: 2) {
+                #expect(joined.contains(CGPoint(x: x, y: y + join)) == original.contains(CGPoint(x: x, y: y)))
+            }
+        }
+    }
+}
+
+@Test func theShadowJoinShrinksContinuouslyToTheClosedEndpoint() {
+    let bounds = CGRect(x: 0, y: 0, width: 300, height: 51)
+    let closed = ShelfSurface.liquidPath(in: bounds, progress: 0, originX: 240, joinHeight: 12)
+    #expect(closed.isEmpty)
+    for progress: CGFloat in [0.0001, 0.001, 0.01] {
+        let path = ShelfSurface.liquidPath(in: bounds, progress: progress, originX: 240, joinHeight: 12)
+        // Both the bridge and body must converge on zero width. A constant
+        // six-point neck would leave a visible rectangle before disappearing.
+        #expect(path.boundingBoxOfPath.width < bounds.width * progress * 2)
+        #expect(path.boundingBoxOfPath.minY == 0)
+    }
+}
+
+@Test func aWideBundleStaysInsideTheNativeStatusArea() {
+    let statusArea = CGRect(x: 1000, y: 0, width: 800, height: 1169)
+    let body = ShelfSurface.frame(anchor: CGRect(x: 1386, y: 1130, width: 28, height: 39),
+        screen: statusArea, menuBarBottom: 1130, bodyWidth: 5000, height: 39, scale: 2)
+    let panel = ShelfSurface.panelFrame(body: body, joinHeight: 12)
+    #expect(panel.minX == 1008)
+    #expect(panel.maxX == 1792)
+    #expect(!panel.intersects(CGRect(x: 0, y: 1130, width: 1000, height: 39)))
+    #expect(ShelfSurface.panelFrame(body: body, joinHeight: 0) == body)
+}
+
+@Test func joinTapersAtBothSidesAndMeetsTheOpaqueBody() {
+    let width: CGFloat = 200
+    let join: CGFloat = 12
+    for y: CGFloat in [0, 3, 6, 9] {
+        #expect(ShelfSurface.joinOpacity(at: CGPoint(x: 0, y: y), width: width, joinHeight: join) == 0)
+        #expect(ShelfSurface.joinOpacity(at: CGPoint(x: width, y: y), width: width, joinHeight: join) == 0)
+        for x: CGFloat in [0.25, 2, 5, 10, 22, 100] {
+            let left = ShelfSurface.joinOpacity(at: CGPoint(x: x, y: y), width: width, joinHeight: join)
+            let right = ShelfSurface.joinOpacity(at: CGPoint(x: width - x, y: y), width: width, joinHeight: join)
+            #expect(abs(left - right) < 0.00001)
+        }
+    }
+    for x: CGFloat in [0.25, 1, 5, 22, 100, 199.75] {
+        let before = ShelfSurface.joinOpacity(at: CGPoint(x: x, y: join - 0.001), width: width, joinHeight: join)
+        #expect(before > 0.999)
+        #expect(ShelfSurface.joinOpacity(at: CGPoint(x: x, y: join), width: width, joinHeight: join) == 1)
+    }
+}

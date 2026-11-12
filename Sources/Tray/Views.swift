@@ -6,6 +6,7 @@ import TrayCore
 struct FlaredShelf: Shape {
     var progress: CGFloat
     var originX: CGFloat
+    var joinHeight: CGFloat
 
     nonisolated var animatableData: CGFloat {
         get { progress }
@@ -13,7 +14,7 @@ struct FlaredShelf: Shape {
     }
 
     nonisolated func path(in rect: CGRect) -> Path {
-        Path(ShelfSurface.liquidPath(in: rect, progress: progress, originX: originX))
+        Path(ShelfSurface.liquidPath(in: rect, progress: progress, originX: originX, joinHeight: joinHeight))
     }
 }
 
@@ -86,10 +87,11 @@ struct ShelfView: View {
         }
         .frame(height: controller.rowHeight)
         .padding(.horizontal, ShelfSurface.flare)
+        .padding(.top, controller.shelfJoinHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(Double(min(1, max(0, reveal))))
         .background {
-            WallpaperSurface(snapshot: controller.wallpaper)
+            WallpaperSurface(snapshot: controller.wallpaper, joinHeight: controller.shelfJoinHeight)
                 .accessibilityHidden(true)
         }
         .overlay(alignment: .topLeading) {
@@ -97,13 +99,13 @@ struct ShelfView: View {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(.primary.opacity(0.8))
                     .frame(width: 2, height: max(1, controller.rowHeight - 10))
-                    .offset(x: x - 1, y: 5)
+                    .offset(x: x - 1, y: controller.shelfJoinHeight + 5)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
-        .clipShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX))
-        .contentShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX))
+        .clipShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX, joinHeight: controller.shelfJoinHeight))
+        .contentShape(FlaredShelf(progress: reduceMotion ? 1 : reveal, originX: controller.shelfOriginX, joinHeight: controller.shelfJoinHeight))
         .opacity(reduceMotion ? Double(min(1, max(0, reveal))) : 1)
         .allowsHitTesting(controller.shelfPresented)
         .coordinateSpace(name: "Shelf")

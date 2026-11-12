@@ -3,6 +3,26 @@ import CoreGraphics
 public enum ShelfSurface {
     public static let flare: CGFloat = 22
 
+    /// The blend lives above the body, behind the native status icons.
+    public static func joinHeight(rowHeight: CGFloat) -> CGFloat { min(12, rowHeight / 2) }
+
+    /// Alpha for the background above the body, in top-left coordinates. The
+    /// side fade narrows toward the join, so it meets the solid body without
+    /// leaving a rectangular edge or dimming any of the body wallpaper.
+    public static func joinOpacity(at point: CGPoint, width: CGFloat, joinHeight: CGFloat) -> CGFloat {
+        guard joinHeight > 0, point.y < joinHeight else { return 1 }
+        let depth = min(1, max(0, point.y / joinHeight))
+        let reach = min(flare, width / 2) * (1 - depth)
+        let distance = max(0, min(point.x, width - point.x))
+        let side = reach > 0 ? min(1, distance / reach) : 1
+        return depth * side * side * (3 - 2 * side)
+    }
+
+    public static func panelFrame(body: CGRect, joinHeight: CGFloat) -> CGRect {
+        CGRect(x: body.minX, y: body.minY, width: body.width,
+               height: body.height + joinHeight)
+    }
+
     /// The captured status window already includes macOS's icon spacing.
     public static func cellWidth(itemWidth: CGFloat) -> CGFloat {
         max(1, itemWidth)
@@ -48,7 +68,7 @@ public enum ShelfSurface {
         let depth = rect.height * growth * (2 - growth)
         let origin = min(w - min(15, w / 2), max(min(15, w / 2), originX))
         let center = origin + (w / 2 - origin) * growth
-        let topHalf = 3 + (w / 2 - 3) * growth * growth
+        let topHalf = 3 * growth + (w / 2 - 3) * growth * growth
         let finalHalf = w / 2 - min(flare, w / 4)
         let bodyHalf = depth / 2 + (finalHalf - depth / 2) * growth + ripple * flare
         let neck = min(22, depth * 0.5)

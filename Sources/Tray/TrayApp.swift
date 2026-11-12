@@ -26,28 +26,22 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var message = ""
     @Published var wallpaper: WallpaperSnapshot?
     @Published var rowHeight: CGFloat = NSStatusBar.system.thickness
+    @Published var shelfJoinHeight: CGFloat = 0
     @Published var shelfPresented = false
     @Published var shelfOriginX: CGFloat = 0
     private(set) var shelfPresentationRevision = 0
     private(set) var animatesShelf = true
-    @Published var chevronPhase: CGFloat = 0
-    private(set) var chevronMenuHeight: CGFloat = 30
-    private(set) var chevronForeground: Color = .white
-    private(set) var chevronOriginX: CGFloat = 0
     @Published var isRefreshing = false
     private var trigger: NSStatusItem!
     private var divider: NSStatusItem!
     private var panel: ShelfPanel?
     private var shelfFrameTarget: CGRect?
-    private var chevronPanel: ChevronPanel?
-    private var chevronTask: Task<Void, Never>?
-    private var chevronTransition: ChevronTransition?
+    private let chevron = ChevronView()
     private var shelfIsAnimating = false
     private var refreshPending = false
-    private let chevronImage = ChevronArtwork.image()
-    private let hiddenChevronImage = ChevronArtwork.image(hidden: true)
     private var settings: NSWindow?
     private var timer: Timer?
+    private var menuBarVisibilityTimer: Timer?
     private var outsideMonitor: Any?
     private var keyMonitor: Any?
     var itemFrames: [UInt32: CGRect] = [:]
@@ -67,6 +61,11 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private var shelfDropContext: (bar: CGRect, trigger: StatusWindow)?
 
     private var notifications: [NSObjectProtocol] = []
+    private var menuOwnerObservation: NSKeyValueObservation?
+    private var menuTitles: MenuBarTitleMeasurement?
+    private var menuTitleTask: Task<Void, Never>?
+    private var menuTitleRevision = 0
+    private var menuTitleUnsupportedOwner: pid_t?
     private var scanTask: Task<Void, Never>?
     private var sources: [SourceItem] = []
     private var sourceTransitionItems: [MenuItem] = []
@@ -75,7 +74,11 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     func applicationDidFinishLaunching(_ notification: Notification) {
         trigger = NSStatusBar.system.statusItem(withLength: 28)
         trigger.autosaveName = "Tray.Trigger"
-        trigger.button?.image = chevronImage
+        if let button = trigger.button {
+            chevron.frame.origin = CGPoint(x: button.bounds.midX - 9, y: button.bounds.midY - 9)
+            chevron.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+            button.addSubview(chevron)
+        }
         trigger.button?.toolTip = "Menu Bar Bar. Click to open, right-click for options."
         trigger.button?.target = self
         trigger.button?.action = #selector(toggle)
@@ -116,7 +119,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             }
             if self?.isPresentingBundledMenu == true { return event }
             if event.type == .keyDown && event.keyCode == 53 &&
-                (self?.panel?.isVisible == true || self?.chevronTask != nil) {
+                self?.panel?.isVisible == true {
                 self?.hideShelf(animated: false)
                 return nil
             }
@@ -131,6 +134,12 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         notifications.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hideShelf(animated: false) }
         })
+        menuOwnerObservation = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.menuTitleUnsupportedOwner = nil
+                self?.invalidateMenuTitles()
+            }
+        }
         if isArranging { showSettings() }
     }
 
@@ -141,12 +150,17 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationWillTerminate(_ notification: Notification) {
         dragMonitor.stop()
+        menuOwnerObservation?.invalidate()
+        menuOwnerObservation = nil
+        menuTitleTask?.cancel()
+        menuTitleTask = nil
+        menuTitles = nil
         divider.length = 18
         activationTask?.cancel()
         commandTask?.cancel()
         moveTask?.cancel()
-        chevronTask?.cancel()
         timer?.invalidate()
+        menuBarVisibilityTimer?.invalidate()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
     }
@@ -160,10 +174,50 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         }
         divider.length = length
         divider.button?.image = isArranging ? NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: "Tray divider") : nil
-        trigger.button?.image = shelfPresented ? hiddenChevronImage : chevronImage
+        updateChevron(animated: false)
+    }
+
+    private func invalidateMenuTitles(revision: Int? = nil) {
+        if let revision, revision != menuTitleRevision { return }
+        menuTitleRevision += 1
+        menuTitleTask?.cancel()
+        menuTitleTask = nil
+        menuTitles = nil
+        // Drop the overlap immediately. Re-enable it only after a monitored,
+        // current measurement arrives from the background reader.
+        if let panel, panel.isVisible { layoutShelf(panel, refreshWallpaper: false) }
+        ensureMenuTitles()
+    }
+
+    private func ensureMenuTitles() {
+        guard let owner = NSWorkspace.shared.menuBarOwningApplication,
+              owner.processIdentifier != menuTitleUnsupportedOwner,
+              menuTitles?.ownerPID != owner.processIdentifier, menuTitleTask == nil else { return }
+        let pid = owner.processIdentifier
+        let revision = menuTitleRevision
+        menuTitleTask = Task { [weak self] in
+            let result = await MenuBarTitleObservation.measure(ownerPID: pid) { [weak self] event in
+                guard let self, revision == self.menuTitleRevision else { return }
+                if case .unsupportedLayout = event { self.menuTitleUnsupportedOwner = pid }
+                self.invalidateMenuTitles(revision: revision)
+            }
+            guard let self, !Task.isCancelled, revision == self.menuTitleRevision else { return }
+            self.menuTitleTask = nil
+            guard NSWorkspace.shared.menuBarOwningApplication?.processIdentifier == pid else {
+                self.invalidateMenuTitles()
+                return
+            }
+            self.menuTitles = result
+            if self.shelfIsAnimating {
+                self.refreshPending = true
+            } else if let panel = self.panel, panel.isVisible {
+                self.layoutShelf(panel, refreshWallpaper: false)
+            }
+        }
     }
 
     func refresh() {
+        ensureMenuTitles()
         guard !shelfIsAnimating else { refreshPending = true; return }
         screenAccess = CGPreflightScreenCaptureAccess()
         accessibilityAccess = AXIsProcessTrusted()
@@ -235,9 +289,9 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
             panel = shelf
         }
         animatesShelf = NSApp.currentEvent?.type != .keyDown && NSApp.currentEvent?.type != .keyUp
-        // Keep expensive captures outside the transition. The existing icon
-        // cache and wallpaper provide its first frame; refresh after it settles.
-        layoutShelf(shelf, refreshWallpaper: false)
+        // Capture the current space before opening, so the first frame follows
+        // fullscreen backdrops as well as the desktop. Reuse the icon cache.
+        layoutShelf(shelf)
         // Layout can synchronously update a retained SwiftUI host. Publish the
         // new revision only once that work is finished and opening can begin.
         shelfPresentationRevision += 1
@@ -249,7 +303,18 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         // SwiftUI callback must never dismiss the host being opened.
         if needsContent { shelf.contentView = ShelfHostingView(controller: self) }
         shelf.makeKeyAndOrderFront(nil)
-        animateChevron(opening: true, animated: animatesShelf)
+        // Fullscreen can retract its menu bar without changing spaces. Watch
+        // only while open, including during native menu tracking.
+        menuBarVisibilityTimer?.invalidate()
+        let visibilityTimer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.shelfPresented, let screen = self.panel?.screen else { return }
+                if MenuBarGeometry.window(for: screen) == nil { self.hideShelf(animated: false) }
+            }
+        }
+        menuBarVisibilityTimer = visibilityTimer
+        RunLoop.main.add(visibilityTimer, forMode: .common)
+        updateChevron(animated: animatesShelf)
     }
 
     private func layoutShelf(_ shelf: ShelfPanel, animateResize: Bool = false, refreshWallpaper: Bool = true) {
@@ -277,14 +342,24 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         }
         let menuBarBottom = barFrame.flatMap { value in NSScreen.screens.first.map { $0.frame.maxY - value.maxY } } ?? anchor.minY
         triggerFrame = anchor
-        let frame = ShelfSurface.frame(anchor: anchor, screen: screen.frame, menuBarBottom: menuBarBottom,
+        var layoutScreen = screen.frame
+        shelfJoinHeight = 0
+        if let barFrame, let menuTitles,
+           menuTitles.ownerPID == NSWorkspace.shared.menuBarOwningApplication?.processIdentifier,
+           let area = MenuBarGeometry.statusArea(menuBar: menuTitles.menuBar, titles: menuTitles.titles, targetBar: barFrame),
+           area.width >= 2 * ShelfSurface.flare + rowHeight + 16 {
+            layoutScreen = CGRect(x: area.minX, y: screen.frame.minY,
+                                  width: area.width, height: screen.frame.height)
+            shelfJoinHeight = ShelfSurface.joinHeight(rowHeight: rowHeight)
+        }
+        let frame = ShelfSurface.frame(anchor: anchor, screen: layoutScreen, menuBarBottom: menuBarBottom,
                                        bodyWidth: width, height: rowHeight, scale: screen.backingScaleFactor)
-        // Use the exact body frame. Fractional overlap gets rounded by AppKit
-        // and can expose a bright row above the wallpaper.
-        let panelFrame = frame
+        // Keep the body flush. The extra area above it fades out the native
+        // background shadow behind status windows, without moving the icon row.
+        let panelFrame = ShelfSurface.panelFrame(body: frame, joinHeight: shelfJoinHeight)
         let targetChanged = shelfFrameTarget != panelFrame
         let shouldAnimate = animateResize && shelfPresented && shelf.isVisible &&
-            !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && chevronTask == nil
+            !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if targetChanged || !shelf.isVisible {
             shelfFrameTarget = panelFrame
             if shouldAnimate {
@@ -306,18 +381,20 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func hideShelf(animated: Bool = true) {
+        menuBarVisibilityTimer?.invalidate()
+        menuBarVisibilityTimer = nil
         cancelDrag()
         moveTask?.cancel()
         activationTask?.cancel()
         bundledMenuPresenter.cancel()
         activePopupID = nil
-        guard panel?.isVisible == true || shelfPresented || chevronTask != nil || chevronPanel?.isVisible == true else { return }
+        guard panel?.isVisible == true || shelfPresented else { return }
         guard shelfPresented || !animated else { return }
         shelfPresentationRevision += 1
         animatesShelf = animated
         shelfIsAnimating = animated
         shelfPresented = false
-        animateChevron(opening: false, animated: animated)
+        updateChevron(animated: animated)
         if !animated { finishShelfTransition(revision: shelfPresentationRevision) }
     }
 
@@ -331,49 +408,9 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    private func animateChevron(opening: Bool, animated: Bool) {
-        chevronTask?.cancel()
-        chevronTask = nil
-        let target: CGFloat = opening ? 1 : 0
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              triggerFrame.height > 0 else {
-            chevronTransition = nil
-            chevronPhase = target
-            chevronPanel?.orderOut(nil)
-            trigger.button?.image = opening ? hiddenChevronImage : chevronImage
-            return
-        }
-        let overlay = chevronPanel ?? ChevronPanel()
-        chevronPanel = overlay
-        chevronMenuHeight = triggerFrame.height
-        chevronForeground = trigger.button?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
-        if !(overlay.contentView is NSHostingView<ChevronSplashView>) {
-            overlay.contentView = NSHostingView(rootView: ChevronSplashView(controller: self))
-        }
-        let shelfFrame = panel?.frame ?? CGRect(x: triggerFrame.midX - 52, y: 0, width: 104, height: rowHeight)
-        chevronOriginX = triggerFrame.midX - shelfFrame.minX
-        overlay.setFrame(CGRect(x: shelfFrame.minX, y: triggerFrame.minY - rowHeight,
-                                width: shelfFrame.width, height: triggerFrame.height + rowHeight), display: true)
-        trigger.button?.image = hiddenChevronImage
-        overlay.orderFrontRegardless()
-        let now = ProcessInfo.processInfo.systemUptime
-        let current = chevronTransition?.phase(at: now) ?? chevronPhase
-        let transition = ChevronTransition(opening: opening, phase: current, began: now)
-        chevronTransition = transition
-        // Retarget from the visible phase when a click interrupts the motion.
-        // SwiftUI interpolates this small view on its display-driven clock.
-        var reset = Transaction(animation: nil)
-        reset.disablesAnimations = true
-        withTransaction(reset) { chevronPhase = transition.start }
-        withAnimation(.linear(duration: transition.duration)) { chevronPhase = transition.target }
-        chevronTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(transition.duration)) } catch { return }
-            guard !Task.isCancelled, let self else { return }
-            self.chevronTransition = nil
-            self.chevronPanel?.orderOut(nil)
-            self.trigger.button?.image = opening ? self.hiddenChevronImage : self.chevronImage
-            self.chevronTask = nil
-        }
+    private func updateChevron(animated: Bool) {
+        chevron.setOpen(shelfPresented, animated: animated)
+        trigger.button?.setAccessibilityLabel(shelfPresented ? "Close Menu Bar Bar" : "Open Menu Bar Bar")
     }
 
     func arrange() {
@@ -487,7 +524,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
     private func shelfReorderSlot(_ id: UInt32, at point: CGPoint) -> ShelfReorderSlot? {
         guard shelfPresented, let panel, panel.isVisible else { return nil }
         let local = CGPoint(x: point.x - panel.frame.minX, y: panel.frame.maxY - point.y)
-        let viewport = CGRect(x: ShelfSurface.flare, y: 0,
+        let viewport = CGRect(x: ShelfSurface.flare, y: shelfJoinHeight,
                               width: max(0, panel.frame.width - 2 * ShelfSurface.flare), height: rowHeight)
         let cells = items.compactMap { item in
             itemFrames[item.id].map { ShelfDragCell(id: item.id, frame: $0) }
@@ -550,8 +587,8 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
                    width: $0.width, height: $0.height)
         }
         let shelf = panel.map {
-            CGRect(x: $0.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - $0.frame.maxY,
-                   width: $0.frame.width, height: $0.frame.height)
+            CGRect(x: $0.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - $0.frame.maxY + shelfJoinHeight,
+                   width: $0.frame.width, height: rowHeight)
         }
         guard let drop = StatusDragGeometry.menuBarDropPoint(pointer: pointer, image: image,
                                                             bar: context.bar, trigger: context.trigger.frame, shelf: shelf) else { return nil }
@@ -678,7 +715,7 @@ final class TrayController: NSObject, NSApplicationDelegate, ObservableObject {
         activationTask?.cancel()
         let revision = shelfPresentationRevision
         let local = itemFrames[item.id] ?? CGRect(x: panel.frame.width / 2 - rowHeight / 2,
-                                                  y: 0, width: rowHeight, height: rowHeight)
+                                                  y: shelfJoinHeight, width: rowHeight, height: rowHeight)
         let anchor = CGRect(x: panel.frame.minX + local.minX, y: panel.frame.maxY - local.maxY,
                             width: local.width, height: local.height)
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
@@ -783,7 +820,8 @@ final class ShelfPanel: NSPanel {
         isOpaque = false
         // A separate window shadow creates a horizontal seam across the join.
         hasShadow = false
-        level = .init(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        // Above the native background, below status icons and their highlights.
+        level = .mainMenu
         collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
         animationBehavior = .none
         isReleasedWhenClosed = false

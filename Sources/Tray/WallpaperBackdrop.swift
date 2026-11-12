@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TrayCore
 
 struct WallpaperSnapshot {
     let image: CGImage
@@ -13,17 +14,26 @@ enum WallpaperBackdrop {
         return unsafeBitCast(symbol, to: Capture.self)
     }()
 
-    /// Select only the wallpaper plane. Desktop icons, backstops, menu material,
-    /// and normal application windows must never become the shelf background.
+    /// Fullscreen spaces use the Dock's backdrop instead of desktop wallpaper.
+    /// Desktop icons, menu material and application windows stay excluded.
     static func windowID(in windows: [[String: Any]], display: CGRect) -> CGWindowID? {
         let desktop = Int(CGWindowLevelForKey(.desktopWindow))
-        return windows.first { info in
-            guard let layer = info[kCGWindowLayer as String] as? Int,
-                  (desktop - 1...desktop).contains(layer),
+        let candidates = windows.filter { info in
+            guard (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let frame = CGRect(dictionaryRepresentation: bounds) else { return false }
             return frame.contains(display)
-        }?[kCGWindowNumber as String] as? CGWindowID
+        }
+        let fullscreen = candidates.first {
+            ($0[kCGWindowLayer as String] as? Int) == desktop + 1 &&
+            ($0[kCGWindowOwnerName as String] as? String) == "Dock" &&
+            ($0[kCGWindowName as String] as? String) == "Fullscreen Backdrop"
+        }
+        let wallpaper = candidates.first {
+            guard let layer = $0[kCGWindowLayer as String] as? Int else { return false }
+            return (desktop - 1...desktop).contains(layer)
+        }
+        return (fullscreen ?? wallpaper)?[kCGWindowNumber as String] as? CGWindowID
     }
 
     static func quartzFrame(_ frame: CGRect, primaryTop: CGFloat) -> CGRect {
@@ -42,95 +52,36 @@ enum WallpaperBackdrop {
                                    CGWindowListOption.optionIncludingWindow.rawValue, id,
                                    CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
               StatusIconCache.hasVisiblePixels(image) else { return nil }
-        // Match the native surface at the join, then ease back to the sharp
-        // wallpaper. Sampling only its bottom pixel excludes status glyphs.
-        var joined = image
-        if let bar = MenuBarGeometry.window(in: windows, display: display) {
-            let scale = screen.backingScaleFactor
-            // WindowServer can return an opaque white image for a sub-point
-            // capture. Capture the bar at its native size before cropping.
-            if let material = capture?(bar.frame,
-                    CGWindowListOption.optionOnScreenBelowWindow.union(.optionIncludingWindow).rawValue,
-                    bar.id, CGWindowImageOption.bestResolution.rawValue)?.takeRetainedValue(),
-               let edge = nativeEdge(from: material) {
-                joined = joinedImage(wallpaper: image, edge: edge, transitionPixels: Int(12 * scale)) ?? image
-            }
-        }
-        return WallpaperSnapshot(image: joined, frame: frame)
-    }
-
-    /// WindowServer sometimes returns the entire bar as opaque black. A real
-    /// dark bar still contains its menu titles. Never extend an empty capture.
-    static func nativeEdge(from material: CGImage) -> CGImage? {
-        let width = material.width
-        let height = material.height
-        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: format),
-              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
-        context.draw(material, in: CGRect(x: 0, y: 0, width: width, height: height))
-        for offset in stride(from: 0, to: context.bytesPerRow * height, by: 4) {
-            if pixels[offset + 3] > 0 && (pixels[offset] > 0 || pixels[offset + 1] > 0 || pixels[offset + 2] > 0) {
-                guard let edge = material.cropping(to: CGRect(x: 0, y: height - 1, width: width, height: 1)),
-                      StatusIconCache.hasVisiblePixels(edge) else { return nil }
-                return edge
-            }
-        }
-        return nil
-    }
-
-    /// Carry the native edge's colour correction into the first few wallpaper
-    /// rows. Preserve the wallpaper's detail and leave all lower rows untouched.
-    static func joinedImage(wallpaper: CGImage, edge: CGImage, transitionPixels: Int) -> CGImage? {
-        let width = wallpaper.width
-        let height = wallpaper.height
-        let rows = min(height, transitionPixels)
-        guard rows > 1 else { return wallpaper }
-        let space = wallpaper.colorSpace ?? CGColorSpaceCreateDeviceRGB()
-        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-        guard let output = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: width * 4, space: space, bitmapInfo: format),
-              let sample = CGContext(data: nil, width: width, height: 1, bitsPerComponent: 8,
-                    bytesPerRow: width * 4, space: space, bitmapInfo: format),
-              let pixels = output.data?.assumingMemoryBound(to: UInt8.self),
-              let edgePixels = sample.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
-        output.draw(wallpaper, in: CGRect(x: 0, y: 0, width: width, height: height))
-        sample.interpolationQuality = .none
-        sample.draw(edge, in: CGRect(x: 0, y: 0, width: width, height: 1))
-        // Save the original top row before modifying it.
-        let top = Array(UnsafeBufferPointer(start: pixels, count: width * 4))
-        for y in 0..<rows {
-            let t = Double(y) / Double(rows - 1)
-            let weight = 1 - t * t * (3 - 2 * t)
-            for x in 0..<width {
-                let column = x * 4
-                let offset = y * output.bytesPerRow + column
-                for channel in 0..<3 {
-                    let alpha = Double(edgePixels[column + 3]) / 255
-                    let correction = Double(edgePixels[column + channel]) - Double(top[column + channel]) * alpha
-                    let value = Double(pixels[offset + channel]) + correction * weight
-                    pixels[offset + channel] = UInt8(clamping: Int(value.rounded()))
-                }
-            }
-        }
-        return output.makeImage()
+        return WallpaperSnapshot(image: image, frame: frame)
     }
 
 }
 
 struct WallpaperSurface: NSViewRepresentable {
     let snapshot: WallpaperSnapshot?
+    var joinHeight: CGFloat = 0
 
     func makeNSView(context: Context) -> WallpaperSurfaceView { WallpaperSurfaceView() }
     func updateNSView(_ view: WallpaperSurfaceView, context: Context) {
-        guard view.snapshot?.image !== snapshot?.image || view.snapshot?.frame != snapshot?.frame else { return }
+        guard view.snapshot?.image !== snapshot?.image || view.snapshot?.frame != snapshot?.frame ||
+              view.joinHeight != joinHeight else { return }
         view.snapshot = snapshot
+        view.joinHeight = joinHeight
         view.needsDisplay = true
     }
 }
 
 final class WallpaperSurfaceView: NSView {
     var snapshot: WallpaperSnapshot?
+    var joinHeight: CGFloat = 0
+    private struct JoinMask {
+        let size: CGSize
+        let joinHeight: CGFloat
+        let scale: CGFloat
+        let image: CGImage
+    }
+    private var joinMask: JoinMask?
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func layout() {
         super.layout()
@@ -141,10 +92,51 @@ final class WallpaperSurfaceView: NSView {
         // If capture is unavailable, keep applications behind the shelf hidden.
         NSColor.windowBackgroundColor.setFill()
         bounds.fill()
-        guard let snapshot, let window, let context = NSGraphicsContext.current?.cgContext else { return }
-        let location = window.convertToScreen(convert(bounds, to: nil))
-        let destination = snapshot.frame.offsetBy(dx: -location.minX, dy: -location.minY)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        if let snapshot, let window {
+            let location = window.convertToScreen(convert(bounds, to: nil))
+            let destination = snapshot.frame.offsetBy(dx: -location.minX, dy: -location.minY)
+            context.interpolationQuality = .none
+            context.draw(snapshot.image, in: destination)
+        }
+        // Fade only the part above the shelf body. The body keeps the exact
+        // wallpaper pixels, while native status windows remain above this panel.
+        guard joinHeight > 0 else { return }
+        let scale = max(1, hypot(context.ctm.c, context.ctm.d))
+        guard let mask = opacityMask(scale: scale) else {
+            context.clear(CGRect(x: bounds.minX, y: bounds.maxY - joinHeight,
+                                 width: bounds.width, height: joinHeight))
+            return
+        }
+        context.saveGState()
+        context.setBlendMode(.destinationIn)
         context.interpolationQuality = .none
-        context.draw(snapshot.image, in: destination)
+        context.draw(mask, in: bounds)
+        context.restoreGState()
+    }
+
+    private func opacityMask(scale: CGFloat) -> CGImage? {
+        if let joinMask, joinMask.size == bounds.size,
+           joinMask.joinHeight == joinHeight, joinMask.scale == scale { return joinMask.image }
+        let width = Int(ceil(bounds.width * scale))
+        let height = Int(ceil(bounds.height * scale))
+        guard width > 0, height > 0,
+              let bitmap = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                  bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+              let pixels = bitmap.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        pixels.initialize(repeating: 255, count: bitmap.bytesPerRow * height)
+        for y in 0..<min(height, Int(ceil(joinHeight * scale))) {
+            for x in 0..<width {
+                let point = CGPoint(x: (CGFloat(x) + 0.5) / scale, y: (CGFloat(y) + 0.5) / scale)
+                let alpha = ShelfSurface.joinOpacity(at: point, width: bounds.width, joinHeight: joinHeight)
+                let value = UInt8((alpha * 255).rounded())
+                let offset = y * bitmap.bytesPerRow + x * 4
+                for channel in 0..<4 { pixels[offset + channel] = value }
+            }
+        }
+        guard let image = bitmap.makeImage() else { return nil }
+        joinMask = JoinMask(size: bounds.size, joinHeight: joinHeight, scale: scale, image: image)
+        return image
     }
 }
